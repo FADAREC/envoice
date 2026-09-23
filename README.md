@@ -32,22 +32,33 @@ Out of v1 (later): cloud sync, multi-user, recurring invoices, expenses.
 | PDF | `pdf` + `printing` |
 | Currency | NGN (₦) default |
 
+## Codemagic (cloud build)
+
+This repo does **not** commit `android/` or `web/` folders. The Codemagic workflow (`codemagic.yaml`) creates them on the build machine, runs Drift codegen, then builds:
+
+1. Release APK → `build/app/outputs/flutter-apk/app-release.apk`
+2. Web → `build/web/`
+
+**Important:** In Codemagic, use the workflow named **Android & Web** (from `codemagic.yaml`), not only the UI default workflow, so the generate scripts run.
+
+After a successful build, download the APK from Codemagic artifacts and install it on your Android phone.
+
+## Local build (if you have a machine)
+
+```bash
+git clone https://github.com/FADAREC/envoice.git
+cd envoice
+flutter create . --project-name envoice --org com.envoice --platforms=android,web
+flutter pub get
+dart run build_runner build --delete-conflicting-outputs
+flutter run
+# or
+flutter build apk --release
+```
+
 ## Design
 
 Premium, restrained. Near-black / off-white, one accent, generous space. Invoice PDFs should feel suitable for island and classy clients.
-
-## Getting started
-
-```bash
-flutter pub get
-flutter run
-```
-
-Generate Drift code after schema changes:
-
-```bash
-dart run build_runner build --delete-conflicting-outputs
-```
 
 ## Repo note
 

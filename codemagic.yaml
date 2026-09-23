@@ -1,0 +1,43 @@
+workflows:
+  android-web:
+    name: Android & Web
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      flutter: stable
+      java: 17
+      vars:
+        PACKAGE_NAME: "com.envoice.app"
+    scripts:
+      - name: Generate platform folders
+        script: |
+          # Repo ships Dart source only. Create android/ios/web scaffolding on the builder.
+          flutter create . --project-name envoice --org com.envoice --platforms=android,web
+
+      - name: Get dependencies
+        script: |
+          flutter pub get
+
+      - name: Generate Drift code
+        script: |
+          dart run build_runner build --delete-conflicting-outputs
+
+      - name: Build Android APK (release)
+        script: |
+          flutter build apk --release
+
+      - name: Build Web
+        script: |
+          flutter build web --release
+
+    artifacts:
+      - build/app/outputs/flutter-apk/*.apk
+      - build/web/**
+
+    publishing:
+      email:
+        recipients:
+          - fadarefolajimi67@gmail.com
+        notify:
+          success: true
+          failure: true
