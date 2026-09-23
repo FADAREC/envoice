@@ -11,7 +11,7 @@ class AppColors {
   static const line = Color(0xFFE8E8E8);
   static const surface = Color(0xFFFAFAFA);
   static const white = Color(0xFFFFFFFF);
-  static const accent = Color(0xFF0A0A0A); // primary actions stay near-black
+  static const accent = Color(0xFF0A0A0A);
   static const success = Color(0xFF1B7F4E);
   static const warning = Color(0xFFB45309);
   static const danger = Color(0xFFB91C1C);
@@ -148,7 +148,7 @@ class AppTheme {
           textStyle: textTheme.labelLarge,
         ),
       ),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         elevation: 0,
         color: AppColors.white,
         shape: RoundedRectangleBorder(
