@@ -1,10 +1,10 @@
 name: envoice
 description: Offline-first premium invoicing for Nigerian businesses.
-publish_to: 'none'
+publish_to: "none"
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.5.0 <4.0.0'
+  sdk: ">=3.5.0 <4.0.0"
 
 dependencies:
   flutter:
@@ -16,9 +16,8 @@ dependencies:
   path_provider: ^2.1.5
   path: ^1.9.1
 
-  # State
+  # State (manual providers only — no code generation)
   flutter_riverpod: ^2.6.1
-  riverpod_annotation: ^2.6.1
 
   # PDF + share
   pdf: ^3.11.1
@@ -41,9 +40,6 @@ dev_dependencies:
   flutter_lints: ^5.0.0
   drift_dev: ^2.22.1
   build_runner: ^2.4.13
-  riverpod_generator: ^2.6.3
-  custom_lint: ^0.7.0
-  riverpod_lint: ^2.6.3
 
 flutter:
   uses-material-design: true

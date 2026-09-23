@@ -9,25 +9,35 @@ workflows:
       vars:
         PACKAGE_NAME: "com.envoice.app"
     scripts:
-      - name: Generate platform folders
+      - name: Ensure platform folders
         script: |
-          # Repo ships Dart source only. Create android/ios/web scaffolding on the builder.
-          flutter create . --project-name envoice --org com.envoice --platforms=android,web
+          set -e
+          # Only scaffold if android app gradle is missing
+          if [ ! -f android/app/build.gradle.kts ] && [ ! -f android/app/build.gradle ]; then
+            flutter create . --project-name envoice --org com.envoice --platforms=android,web
+          fi
 
       - name: Get dependencies
         script: |
+          set -e
           flutter pub get
 
-      - name: Generate Drift code
+      - name: Generate Drift database code only
         script: |
-          dart run build_runner build --delete-conflicting-outputs
+          set -e
+          # Riverpod generators removed — only Drift needs codegen.
+          # Build-filter keeps this fast and avoids analyzer hangs.
+          dart run build_runner build --delete-conflicting-outputs \
+            --build-filter="lib/core/db/*"
 
       - name: Build Android APK (release)
         script: |
+          set -e
           flutter build apk --release
 
       - name: Build Web
         script: |
+          set -e
           flutter build web --release
 
     artifacts:
