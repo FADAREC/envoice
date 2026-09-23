@@ -1,0 +1,5 @@
+package com.envoice.app
+
+import io.flutter.embedding.android.FlutterActivity
+
+class MainActivity : FlutterActivity()
