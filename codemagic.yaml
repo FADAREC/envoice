@@ -1,6 +1,6 @@
 workflows:
-  android-web:
-    name: Android & Web
+  android:
+    name: Android APK
     max_build_duration: 60
     instance_type: mac_mini_m2
     environment:
@@ -13,7 +13,7 @@ workflows:
         script: |
           set -e
           if [ ! -f android/app/build.gradle.kts ] && [ ! -f android/app/build.gradle ]; then
-            flutter create . --project-name envoice --org com.envoice --platforms=android,web
+            flutter create . --project-name envoice --org com.envoice --platforms=android
           fi
 
       - name: Get dependencies
@@ -31,14 +31,8 @@ workflows:
           set -e
           flutter build apk --release
 
-      - name: Build Web
-        script: |
-          set -e
-          flutter build web --release
-
     artifacts:
       - build/app/outputs/flutter-apk/*.apk
-      - build/web/**
 
     publishing:
       email:
