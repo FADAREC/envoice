@@ -56,7 +56,6 @@ class AppTheme {
       ),
     );
 
-    // SF-like: tight tracking on large type, neutral body
     final textTheme = GoogleFonts.interTextTheme(base.textTheme).copyWith(
       displayLarge: GoogleFonts.inter(
         fontSize: 34,
@@ -231,12 +230,6 @@ class AppTheme {
         backgroundColor: AppColors.ink,
         contentTextStyle: textTheme.bodyMedium?.copyWith(color: AppColors.white),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-      pageTransitionsTheme: const PageTransitionsTheme(
-        builders: {
-          TargetPlatform.android: CupertinoPageTransitionsBuilder(),
-          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
-        },
       ),
     );
   }
