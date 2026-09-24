@@ -12,7 +12,6 @@ workflows:
       - name: Ensure platform folders
         script: |
           set -e
-          # Only scaffold if android app gradle is missing
           if [ ! -f android/app/build.gradle.kts ] && [ ! -f android/app/build.gradle ]; then
             flutter create . --project-name envoice --org com.envoice --platforms=android,web
           fi
@@ -25,10 +24,7 @@ workflows:
       - name: Generate Drift database code only
         script: |
           set -e
-          # Riverpod generators removed — only Drift needs codegen.
-          # Build-filter keeps this fast and avoids analyzer hangs.
-          dart run build_runner build --delete-conflicting-outputs \
-            --build-filter="lib/core/db/*"
+          dart run build_runner build --build-filter="lib/core/db/*"
 
       - name: Build Android APK (release)
         script: |
