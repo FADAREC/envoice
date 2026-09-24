@@ -19,9 +19,11 @@ pluginManagement {
 
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
-    // Flutter 3.47 verified matrix: AGP 9.1.0 + KGP 2.4.0
-    id("com.android.application") version "9.1.0" apply false
-    id("org.jetbrains.kotlin.android") version "2.4.0" apply false
+    // Flutter 3.47 hard minimums (error if lower):
+    // Gradle >= 8.14.0, AGP >= 8.11.1, KGP >= 2.2.20
+    // Stay on AGP 8.x so third-party plugins that still apply kotlin-android work.
+    id("com.android.application") version "8.11.1" apply false
+    id("org.jetbrains.kotlin.android") version "2.2.20" apply false
 }
 
 include(":app")

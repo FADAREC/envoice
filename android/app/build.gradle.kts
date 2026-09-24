@@ -1,7 +1,7 @@
 plugins {
     id("com.android.application")
-    // Flutter Gradle Plugin must be applied after the Android plugin.
-    // kotlin-android is not applied: AGP 9 uses built-in Kotlin (android.builtInKotlin=true).
+    id("kotlin-android")
+    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
 
@@ -15,6 +15,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    kotlinOptions {
+        jvmTarget = JavaVersion.VERSION_17.toString()
+    }
+
     defaultConfig {
         applicationId = "com.envoice.app"
         minSdk = flutter.minSdkVersion
@@ -25,16 +29,10 @@ android {
 
     buildTypes {
         release {
-            // Debug signing so Codemagic APK installs without a custom keystore.
-            // Replace with a real release keystore before Play Store.
+            // Debug signing so the APK installs without a custom keystore.
+            // Replace before Play Store release.
             signingConfig = signingConfigs.getByName("debug")
         }
-    }
-}
-
-kotlin {
-    compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 
