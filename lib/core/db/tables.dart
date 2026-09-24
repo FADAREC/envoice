@@ -11,12 +11,15 @@ class BusinessProfiles extends Table {
   TextColumn get city => text().nullable()();
   TextColumn get state => text().nullable()();
   TextColumn get country => text().withDefault(const Constant('Nigeria'))();
-  TextColumn get tin => text().nullable(); // Tax ID
-  TextColumn get logoPath => text().nullable(); // local file path
+  /// Tax ID
+  TextColumn get tin => text().nullable()();
+  /// Local file path to logo image
+  TextColumn get logoPath => text().nullable()();
   TextColumn get accentColor => text().withDefault(const Constant('#0A0A0A'))();
   TextColumn get invoicePrefix => text().withDefault(const Constant('INV'))();
   IntColumn get nextInvoiceNumber => integer().withDefault(const Constant(1))();
-  RealColumn get defaultVatRate => real().withDefault(const Constant(7.5))(); // Nigeria VAT
+  /// Nigeria VAT default rate
+  RealColumn get defaultVatRate => real().withDefault(const Constant(7.5))();
   BoolColumn get vatEnabledByDefault =>
       boolean().withDefault(const Constant(false))();
   TextColumn get currencyCode => text().withDefault(const Constant('NGN'))();
@@ -26,7 +29,7 @@ class BusinessProfiles extends Table {
 }
 
 class Clients extends Table {
-  TextColumn get id => text()(); // uuid
+  TextColumn get id => text()();
   TextColumn get name => text().withLength(min: 1, max: 200)();
   TextColumn get email => text().nullable()();
   TextColumn get phone => text().nullable()();
@@ -43,10 +46,10 @@ class Clients extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-/// draft | sent | paid | partial | overdue | voided
+/// Status values: draft | sent | paid | partial | overdue | voided
 class Invoices extends Table {
-  TextColumn get id => text()(); // uuid
-  TextColumn get number => text()(); // e.g. INV-0001
+  TextColumn get id => text()();
+  TextColumn get number => text()();
   TextColumn get clientId => text().references(Clients, #id)();
   TextColumn get status => text().withDefault(const Constant('draft'))();
   DateTimeColumn get issueDate => dateTime()();
@@ -69,12 +72,12 @@ class Invoices extends Table {
 }
 
 class InvoiceItems extends Table {
-  TextColumn get id => text()(); // uuid
+  TextColumn get id => text()();
   TextColumn get invoiceId => text().references(Invoices, #id)();
   TextColumn get description => text()();
   RealColumn get quantity => real().withDefault(const Constant(1))();
   RealColumn get unitPrice => real().withDefault(const Constant(0))();
-  RealColumn get amount => real().withDefault(const Constant(0))(); // qty * unit
+  RealColumn get amount => real().withDefault(const Constant(0))();
   IntColumn get sortOrder => integer().withDefault(const Constant(0))();
 
   @override
@@ -82,12 +85,13 @@ class InvoiceItems extends Table {
 }
 
 class Payments extends Table {
-  TextColumn get id => text()(); // uuid
+  TextColumn get id => text()();
   TextColumn get invoiceId => text().references(Invoices, #id)();
   RealColumn get amount => real()();
   DateTimeColumn get paidAt => dateTime()();
-  TextColumn get method => text().nullable(); // transfer, cash, card, pos
-  TextColumn get reference => text().nullable();
+  /// transfer, cash, card, pos
+  TextColumn get method => text().nullable()();
+  TextColumn get reference => text().nullable()();
   TextColumn get notes => text().nullable()();
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
 

@@ -1,7 +1,6 @@
 plugins {
     id("com.android.application")
     id("kotlin-android")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
 
@@ -29,8 +28,8 @@ android {
 
     buildTypes {
         release {
-            // Codemagic / debug-friendly: sign with debug keys so APK installs without a keystore.
-            // Replace with a real release keystore before Play Store.
+            // Debug signing so the APK installs without a custom keystore.
+            // Replace before Play Store release.
             signingConfig = signingConfigs.getByName("debug")
         }
     }
