@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../dashboard/dashboard_page.dart';
 import '../invoices/invoices_page.dart';
@@ -23,6 +24,12 @@ class _AppShellState extends State<AppShell> {
     SettingsPage(),
   ];
 
+  void _onTap(int i) {
+    if (i == _index) return;
+    HapticFeedback.selectionClick();
+    setState(() => _index = i);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -30,39 +37,46 @@ class _AppShellState extends State<AppShell> {
         index: _index,
         children: _pages,
       ),
-      bottomNavigationBar: Container(
+      bottomNavigationBar: DecoratedBox(
         decoration: const BoxDecoration(
-          border: Border(top: BorderSide(color: AppColors.line)),
+          color: AppColors.white,
+          border: Border(
+            top: BorderSide(color: AppColors.hairline, width: 0.5),
+          ),
         ),
         child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          top: false,
+          child: SizedBox(
+            height: 52,
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _NavItem(
-                  icon: Icons.grid_view_rounded,
+                _Tab(
+                  icon: Icons.home_outlined,
+                  activeIcon: Icons.home_rounded,
                   label: 'Home',
                   selected: _index == 0,
-                  onTap: () => setState(() => _index = 0),
+                  onTap: () => _onTap(0),
                 ),
-                _NavItem(
-                  icon: Icons.receipt_long_outlined,
+                _Tab(
+                  icon: Icons.description_outlined,
+                  activeIcon: Icons.description_rounded,
                   label: 'Invoices',
                   selected: _index == 1,
-                  onTap: () => setState(() => _index = 1),
+                  onTap: () => _onTap(1),
                 ),
-                _NavItem(
-                  icon: Icons.people_outline,
+                _Tab(
+                  icon: Icons.people_outline_rounded,
+                  activeIcon: Icons.people_rounded,
                   label: 'Clients',
                   selected: _index == 2,
-                  onTap: () => setState(() => _index = 2),
+                  onTap: () => _onTap(2),
                 ),
-                _NavItem(
+                _Tab(
                   icon: Icons.settings_outlined,
+                  activeIcon: Icons.settings_rounded,
                   label: 'Settings',
                   selected: _index == 3,
-                  onTap: () => setState(() => _index = 3),
+                  onTap: () => _onTap(3),
                 ),
               ],
             ),
@@ -73,14 +87,16 @@ class _AppShellState extends State<AppShell> {
   }
 }
 
-class _NavItem extends StatelessWidget {
+class _Tab extends StatelessWidget {
   final IconData icon;
+  final IconData activeIcon;
   final String label;
   final bool selected;
   final VoidCallback onTap;
 
-  const _NavItem({
+  const _Tab({
     required this.icon,
+    required this.activeIcon,
     required this.label,
     required this.selected,
     required this.onTap,
@@ -88,26 +104,24 @@ class _NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    final color = selected ? AppColors.black : AppColors.tertiary;
+
+    return Expanded(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              icon,
-              size: 22,
-              color: selected ? AppColors.black : AppColors.faint,
-            ),
-            const SizedBox(height: 4),
+            Icon(selected ? activeIcon : icon, size: 24, color: color),
+            const SizedBox(height: 2),
             Text(
               label,
               style: TextStyle(
-                fontSize: 11,
+                fontSize: 10,
                 fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                color: selected ? AppColors.black : AppColors.faint,
+                color: color,
+                letterSpacing: 0.1,
               ),
             ),
           ],

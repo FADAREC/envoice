@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/db/database_provider.dart';
@@ -6,6 +7,7 @@ import '../../core/db/app_database.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/money.dart';
 import '../invoices/invoice_editor_page.dart';
+import '../clients/clients_page.dart';
 
 final dashboardStatsProvider = FutureProvider<DashboardStats>((ref) async {
   final db = ref.watch(databaseProvider);
@@ -20,43 +22,61 @@ class DashboardPage extends ConsumerWidget {
     final statsAsync = ref.watch(dashboardStatsProvider);
 
     return Scaffold(
+      backgroundColor: AppColors.white,
       body: SafeArea(
         child: RefreshIndicator(
-          onRefresh: () async => ref.invalidate(dashboardStatsProvider),
+          onRefresh: () async {
+            HapticFeedback.lightImpact();
+            ref.invalidate(dashboardStatsProvider);
+          },
           color: AppColors.black,
           child: CustomScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
+            physics: const AlwaysScrollableScrollPhysics(
+              parent: BouncingScrollPhysics(),
+            ),
             slivers: [
               SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                  child: Row(
                     children: [
-                      Text(
-                        'Envoice',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              letterSpacing: 0.12 * 14,
-                              color: AppColors.faint,
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'ENVOICE',
+                              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                                    letterSpacing: 1.2,
+                                    color: AppColors.tertiary,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                             ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Home',
+                              style: Theme.of(context).textTheme.displayLarge,
+                            ),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Overview',
-                        style: Theme.of(context).textTheme.displayLarge,
+                      _CircleButton(
+                        icon: Icons.add,
+                        onTap: () => _newInvoice(context, ref),
                       ),
                     ],
                   ),
                 ),
               ),
+              const SliverToBoxAdapter(child: SizedBox(height: 28)),
               SliverToBoxAdapter(
                 child: statsAsync.when(
                   loading: () => const Padding(
-                    padding: EdgeInsets.all(48),
+                    padding: EdgeInsets.symmetric(vertical: 80),
                     child: Center(
                       child: SizedBox(
-                        width: 24,
-                        height: 24,
+                        width: 22,
+                        height: 22,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
                           color: AppColors.black,
@@ -65,118 +85,192 @@ class DashboardPage extends ConsumerWidget {
                     ),
                   ),
                   error: (e, _) => Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Text('Could not load stats', style: TextStyle(color: AppColors.danger)),
+                    padding: const EdgeInsets.all(20),
+                    child: Text(
+                      'Could not load overview',
+                      style: TextStyle(color: AppColors.danger),
+                    ),
                   ),
-                  data: (stats) => _StatsBody(stats: stats),
+                  data: (stats) => _Body(stats: stats, onNewInvoice: () => _newInvoice(context, ref)),
                 ),
               ),
             ],
           ),
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          await Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const InvoiceEditorPage()),
-          );
-          ref.invalidate(dashboardStatsProvider);
-        },
-        icon: const Icon(Icons.add, size: 20),
-        label: const Text('New invoice'),
-      ),
     );
+  }
+
+  Future<void> _newInvoice(BuildContext context, WidgetRef ref) async {
+    HapticFeedback.mediumImpact();
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const InvoiceEditorPage()),
+    );
+    ref.invalidate(dashboardStatsProvider);
   }
 }
 
-class _StatsBody extends StatelessWidget {
+class _Body extends StatelessWidget {
   final DashboardStats stats;
+  final VoidCallback onNewInvoice;
 
-  const _StatsBody({required this.stats});
+  const _Body({required this.stats, required this.onNewInvoice});
 
   @override
   Widget build(BuildContext context) {
+    final isEmpty = stats.invoiceCount == 0 && stats.clientCount == 0;
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 100),
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 40),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _PrimaryStat(
-            label: 'Outstanding',
-            value: formatMoney(stats.outstanding),
+          // Hero money
+          Text(
+            'Outstanding',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: AppColors.secondary,
+                ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 6),
+          Text(
+            formatMoney(stats.outstanding),
+            style: Theme.of(context).textTheme.displayLarge?.copyWith(
+                  fontSize: 40,
+                  letterSpacing: -1.0,
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+          const SizedBox(height: 28),
+
+          // Metric row
           Row(
             children: [
               Expanded(
-                child: _SecondaryStat(
+                child: _Metric(
                   label: 'Paid this month',
                   value: formatMoney(stats.paidThisMonth),
                 ),
               ),
-              const SizedBox(width: 12),
+              Container(width: 0.5, height: 44, color: AppColors.hairline),
               Expanded(
-                child: _SecondaryStat(
+                child: _Metric(
                   label: 'Overdue',
                   value: '${stats.overdueCount}',
-                  emphasize: stats.overdueCount > 0,
+                  valueColor: stats.overdueCount > 0 ? AppColors.danger : null,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 24),
-          Row(
-            children: [
-              Expanded(
-                child: _CountTile(
-                  label: 'Invoices',
-                  value: '${stats.invoiceCount}',
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _CountTile(
-                  label: 'Clients',
-                  value: '${stats.clientCount}',
-                ),
-              ),
-            ],
+
+          const SizedBox(height: 32),
+          const Divider(height: 0.5),
+          const SizedBox(height: 28),
+
+          Text(
+            'Quick actions',
+            style: Theme.of(context).textTheme.titleMedium,
           ),
+          const SizedBox(height: 14),
+          _ActionRow(
+            icon: Icons.add_circle_outline,
+            title: 'New invoice',
+            subtitle: 'Create and send in under a minute',
+            onTap: onNewInvoice,
+          ),
+          const SizedBox(height: 10),
+          _ActionRow(
+            icon: Icons.person_add_alt_1_outlined,
+            title: 'Add client',
+            subtitle: 'Save details for faster billing',
+            onTap: () {
+              HapticFeedback.selectionClick();
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const ClientEditorPage()),
+              );
+            },
+          ),
+
+          if (isEmpty) ...[
+            const SizedBox(height: 40),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: AppColors.fill,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Start here',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Add a client, then create your first invoice. Everything stays on this device until you choose to share.',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: AppColors.secondary,
+                          height: 1.45,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+          ] else ...[
+            const SizedBox(height: 32),
+            Row(
+              children: [
+                Expanded(
+                  child: _CountCard(
+                    label: 'Invoices',
+                    value: '${stats.invoiceCount}',
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _CountCard(
+                    label: 'Clients',
+                    value: '${stats.clientCount}',
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
   }
 }
 
-class _PrimaryStat extends StatelessWidget {
+class _Metric extends StatelessWidget {
   final String label;
   final String value;
+  final Color? valueColor;
 
-  const _PrimaryStat({required this.label, required this.value});
+  const _Metric({
+    required this.label,
+    required this.value,
+    this.valueColor,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: AppColors.black,
-        borderRadius: BorderRadius.circular(20),
-      ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             label,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Colors.white.withValues(alpha: 0.5),
-                ),
+            style: Theme.of(context).textTheme.bodySmall,
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
           Text(
             value,
-            style: Theme.of(context).textTheme.displayLarge?.copyWith(
-                  color: Colors.white,
-                  fontSize: 28,
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  color: valueColor ?? AppColors.ink,
                 ),
           ),
         ],
@@ -185,62 +279,100 @@ class _PrimaryStat extends StatelessWidget {
   }
 }
 
-class _SecondaryStat extends StatelessWidget {
-  final String label;
-  final String value;
-  final bool emphasize;
+class _ActionRow extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
 
-  const _SecondaryStat({
-    required this.label,
-    required this.value,
-    this.emphasize = false,
+  const _ActionRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.fill,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Icon(icon, size: 22, color: AppColors.ink),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: Theme.of(context).textTheme.titleMedium),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, size: 20, color: AppColors.tertiary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CountCard extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _CountCard({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        border: Border.all(color: AppColors.line),
-        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.hairline, width: 0.5),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label, style: Theme.of(context).textTheme.bodySmall),
           const SizedBox(height: 6),
-          Text(
-            value,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  color: emphasize ? AppColors.danger : AppColors.ink,
-                ),
-          ),
+          Text(value, style: Theme.of(context).textTheme.headlineMedium),
         ],
       ),
     );
   }
 }
 
-class _CountTile extends StatelessWidget {
-  final String label;
-  final String value;
+class _CircleButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
 
-  const _CountTile({required this.label, required this.value});
+  const _CircleButton({required this.icon, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: Theme.of(context).textTheme.bodySmall),
-          Text(value, style: Theme.of(context).textTheme.titleMedium),
-        ],
+    return Material(
+      color: AppColors.black,
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: SizedBox(
+          width: 40,
+          height: 40,
+          child: Icon(icon, size: 22, color: AppColors.white),
+        ),
       ),
     );
   }
