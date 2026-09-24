@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import 'package:drift/drift.dart' hide Column;
@@ -9,6 +10,7 @@ import '../../core/db/app_database.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/money.dart';
 import '../../core/pdf/invoice_pdf.dart';
+import '../../core/widgets/status_badge.dart';
 import 'invoice_editor_page.dart';
 
 class InvoiceDetailPage extends ConsumerStatefulWidget {
@@ -27,6 +29,7 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
   List<InvoiceItem> _items = [];
   List<Payment> _payments = [];
   bool _loading = true;
+  bool _sharing = false;
 
   @override
   void initState() {
@@ -59,7 +62,29 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
   }
 
   Future<void> _sharePdf() async {
+    if (_invoice == null || _client == null || _sharing) return;
+    HapticFeedback.mediumImpact();
+    setState(() => _sharing = true);
+    try {
+      final bytes = await buildInvoicePdf(
+        invoice: _invoice!,
+        client: _client!,
+        business: _business,
+        items: _items,
+        payments: _payments,
+      );
+      await Printing.sharePdf(
+        bytes: bytes,
+        filename: '${_invoice!.number}.pdf',
+      );
+    } finally {
+      if (mounted) setState(() => _sharing = false);
+    }
+  }
+
+  Future<void> _previewPdf() async {
     if (_invoice == null || _client == null) return;
+    HapticFeedback.selectionClick();
     final bytes = await buildInvoicePdf(
       invoice: _invoice!,
       client: _client!,
@@ -67,9 +92,36 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
       items: _items,
       payments: _payments,
     );
-    await Printing.sharePdf(
-      bytes: bytes,
-      filename: '${_invoice!.number}.pdf',
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          backgroundColor: AppColors.fill,
+          appBar: AppBar(
+            title: const Text('Preview'),
+            actions: [
+              TextButton(
+                onPressed: () async {
+                  await Printing.sharePdf(
+                    bytes: bytes,
+                    filename: '${_invoice!.number}.pdf',
+                  );
+                },
+                child: const Text('Share'),
+              ),
+            ],
+          ),
+          body: PdfPreview(
+            build: (_) async => bytes,
+            allowPrinting: true,
+            allowSharing: true,
+            canChangeOrientation: false,
+            canChangePageFormat: false,
+            canDebug: false,
+            pdfFileName: '${_invoice!.number}.pdf',
+          ),
+        ),
+      ),
     );
   }
 
@@ -78,43 +130,79 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
       text: ((_invoice!.total - _invoice!.amountPaid).clamp(0, double.infinity))
           .toStringAsFixed(2),
     );
-    final methodController = TextEditingController(text: 'transfer');
+    String method = 'transfer';
 
     final ok = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
+      backgroundColor: AppColors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (ctx) {
         return Padding(
           padding: EdgeInsets.only(
             left: 24,
             right: 24,
-            top: 24,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+            top: 20,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 28,
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('Record payment', style: Theme.of(ctx).textTheme.titleLarge),
-              const SizedBox(height: 16),
-              TextField(
-                controller: amountController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Amount'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: methodController,
-                decoration: const InputDecoration(
-                  labelText: 'Method (transfer, cash, card, pos)',
-                ),
-              ),
-              const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('Save payment'),
-              ),
-            ],
+          child: StatefulBuilder(
+            builder: (ctx, setModal) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.fillSecondary,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Text('Record payment', style: Theme.of(ctx).textTheme.headlineMedium),
+                  const SizedBox(height: 20),
+                  TextField(
+                    controller: amountController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    autofocus: true,
+                    style: Theme.of(ctx).textTheme.bodyLarge,
+                    decoration: const InputDecoration(labelText: 'Amount'),
+                  ),
+                  const SizedBox(height: 16),
+                  Text('Method', style: Theme.of(ctx).textTheme.bodySmall),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      for (final m in ['transfer', 'cash', 'card', 'pos'])
+                        ChoiceChip(
+                          label: Text(m[0].toUpperCase() + m.substring(1)),
+                          selected: method == m,
+                          onSelected: (_) => setModal(() => method = m),
+                          selectedColor: AppColors.black,
+                          labelStyle: TextStyle(
+                            color: method == m ? Colors.white : AppColors.ink,
+                            fontSize: 13,
+                          ),
+                          backgroundColor: AppColors.fill,
+                          side: BorderSide.none,
+                          showCheckmark: false,
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  ElevatedButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: const Text('Save payment'),
+                  ),
+                ],
+              );
+            },
           ),
         );
       },
@@ -124,15 +212,14 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
     final amount = double.tryParse(amountController.text) ?? 0;
     if (amount <= 0) return;
 
+    HapticFeedback.lightImpact();
     final db = ref.read(databaseProvider);
     await db.addPayment(PaymentsCompanion(
       id: Value(const Uuid().v4()),
       invoiceId: Value(_invoice!.id),
       amount: Value(amount),
       paidAt: Value(DateTime.now()),
-      method: Value(methodController.text.trim().isEmpty
-          ? null
-          : methodController.text.trim()),
+      method: Value(method),
     ));
     await _load();
   }
@@ -143,8 +230,8 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
       return const Scaffold(
         body: Center(
           child: SizedBox(
-            width: 24,
-            height: 24,
+            width: 22,
+            height: 22,
             child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.black),
           ),
         ),
@@ -153,18 +240,15 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
 
     final inv = _invoice!;
     final remaining = inv.total - inv.amountPaid;
+    final company = _business?.companyName ?? 'Your business';
 
     return Scaffold(
+      backgroundColor: AppColors.white,
       appBar: AppBar(
         title: Text(inv.number),
         actions: [
           IconButton(
-            icon: const Icon(Icons.picture_as_pdf_outlined),
-            onPressed: _sharePdf,
-            tooltip: 'Share PDF',
-          ),
-          IconButton(
-            icon: const Icon(Icons.edit_outlined),
+            icon: const Icon(Icons.edit_outlined, size: 22),
             onPressed: () async {
               await Navigator.of(context).push(
                 MaterialPageRoute(
@@ -177,34 +261,114 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
         ],
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(24, 8, 24, 100),
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 120),
         children: [
-          Text(
-            formatMoney(inv.total, symbol: inv.currencySymbol),
-            style: Theme.of(context).textTheme.displayLarge?.copyWith(fontSize: 28),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            inv.status.toUpperCase(),
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  letterSpacing: 0.8,
-                  fontWeight: FontWeight.w600,
+          // Hero amount block (mirrors PDF)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: AppColors.fill,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  remaining > 0.001 ? 'AMOUNT DUE' : 'TOTAL',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        letterSpacing: 1.2,
+                        fontWeight: FontWeight.w600,
+                      ),
                 ),
+                const SizedBox(height: 8),
+                Text(
+                  formatMoney(
+                    remaining > 0.001 ? remaining : inv.total,
+                    symbol: inv.currencySymbol,
+                  ),
+                  style: Theme.of(context).textTheme.displayLarge?.copyWith(
+                        fontSize: 36,
+                        letterSpacing: -1,
+                      ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    StatusBadge(status: inv.status),
+                    if (inv.dueDate != null) ...[
+                      const SizedBox(width: 12),
+                      Text(
+                        'Due ${_fmt(inv.dueDate!)}',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.ink,
+                            ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
           ),
+
+          const SizedBox(height: 28),
+
+          // Share row
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _previewPdf,
+                  icon: const Icon(Icons.visibility_outlined, size: 18),
+                  label: const Text('Preview'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _sharing ? null : _sharePdf,
+                  icon: _sharing
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.ios_share, size: 18),
+                  label: Text(_sharing ? 'Preparing…' : 'Share PDF'),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 32),
+
+          _sectionLabel(context, 'From'),
+          Text(company, style: Theme.of(context).textTheme.titleMedium),
+          if (_business?.email != null)
+            Text(_business!.email!, style: Theme.of(context).textTheme.bodySmall),
+
           const SizedBox(height: 20),
+
           if (_client != null) ...[
-            Text('Bill to', style: Theme.of(context).textTheme.bodySmall),
-            const SizedBox(height: 4),
+            _sectionLabel(context, 'Bill to'),
             Text(_client!.name, style: Theme.of(context).textTheme.titleMedium),
             if (_client!.email != null)
               Text(_client!.email!, style: Theme.of(context).textTheme.bodySmall),
+            if (_client!.phone != null)
+              Text(_client!.phone!, style: Theme.of(context).textTheme.bodySmall),
           ],
-          const SizedBox(height: 24),
-          Text('Items', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
+
+          const SizedBox(height: 28),
+          _sectionLabel(context, 'Items'),
+          const SizedBox(height: 4),
           for (final item in _items)
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
+              padding: const EdgeInsets.symmetric(vertical: 12),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -212,56 +376,81 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(item.description),
                         Text(
-                          '${item.quantity} × ${formatMoney(item.unitPrice, symbol: inv.currencySymbol)}',
+                          item.description,
+                          style: Theme.of(context).textTheme.bodyLarge,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${_qty(item.quantity)} × ${formatMoney(item.unitPrice, symbol: inv.currencySymbol)}',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ],
                     ),
                   ),
-                  Text(formatMoney(item.amount, symbol: inv.currencySymbol)),
+                  Text(
+                    formatMoney(item.amount, symbol: inv.currencySymbol),
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
                 ],
               ),
             ),
-          const Divider(),
-          _kv('Subtotal', formatMoney(inv.subtotal, symbol: inv.currencySymbol)),
+
+          const Divider(height: 32),
+
+          _kv(context, 'Subtotal', formatMoney(inv.subtotal, symbol: inv.currencySymbol)),
           if (inv.discountAmount > 0)
-            _kv('Discount', '- ${formatMoney(inv.discountAmount, symbol: inv.currencySymbol)}'),
+            _kv(context, 'Discount', '- ${formatMoney(inv.discountAmount, symbol: inv.currencySymbol)}'),
           if (inv.vatAmount > 0)
-            _kv('VAT (${inv.vatRate}%)', formatMoney(inv.vatAmount, symbol: inv.currencySymbol)),
-          _kv('Total', formatMoney(inv.total, symbol: inv.currencySymbol), bold: true),
-          _kv('Paid', formatMoney(inv.amountPaid, symbol: inv.currencySymbol)),
+            _kv(context, 'VAT (${inv.vatRate}%)', formatMoney(inv.vatAmount, symbol: inv.currencySymbol)),
+          _kv(context, 'Total', formatMoney(inv.total, symbol: inv.currencySymbol), bold: true),
+          if (inv.amountPaid > 0)
+            _kv(context, 'Paid', formatMoney(inv.amountPaid, symbol: inv.currencySymbol)),
           if (remaining > 0.001)
-            _kv('Remaining', formatMoney(remaining, symbol: inv.currencySymbol)),
+            _kv(context, 'Balance due', formatMoney(remaining, symbol: inv.currencySymbol), bold: true),
+
           if (_payments.isNotEmpty) ...[
-            const SizedBox(height: 24),
-            Text('Payments', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
+            const SizedBox(height: 28),
+            _sectionLabel(context, 'Payments'),
             for (final p in _payments)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(formatMoney(p.amount, symbol: inv.currencySymbol)),
-                subtitle: Text(
-                  [
-                    '${p.paidAt.day}/${p.paidAt.month}/${p.paidAt.year}',
-                    if (p.method != null) p.method!,
-                  ].join(' · '),
-                  style: Theme.of(context).textTheme.bodySmall,
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            formatMoney(p.amount, symbol: inv.currencySymbol),
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          Text(
+                            [
+                              _fmt(p.paidAt),
+                              if (p.method != null) p.method!,
+                            ].join(' · '),
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
           ],
+
           if (inv.notes != null && inv.notes!.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            Text('Notes', style: Theme.of(context).textTheme.bodySmall),
-            Text(inv.notes!),
+            const SizedBox(height: 24),
+            _sectionLabel(context, 'Notes'),
+            Text(inv.notes!, style: Theme.of(context).textTheme.bodyMedium),
           ],
         ],
       ),
       bottomNavigationBar: remaining > 0.001
           ? SafeArea(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
                 child: ElevatedButton(
                   onPressed: _recordPayment,
                   child: const Text('Record payment'),
@@ -272,16 +461,37 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
     );
   }
 
-  Widget _kv(String k, String v, {bool bold = false}) {
+  Widget _sectionLabel(BuildContext context, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Text(
+        text.toUpperCase(),
+        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              letterSpacing: 1.1,
+              fontWeight: FontWeight.w600,
+            ),
+      ),
+    );
+  }
+
+  Widget _kv(BuildContext context, String k, String v, {bool bold = false}) {
     final style = bold
         ? Theme.of(context).textTheme.titleMedium
         : Theme.of(context).textTheme.bodyMedium;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [Text(k, style: style), Text(v, style: style)],
       ),
     );
+  }
+
+  String _fmt(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+
+  String _qty(double q) {
+    if (q == q.roundToDouble()) return q.toInt().toString();
+    return q.toStringAsFixed(2);
   }
 }
