@@ -11,14 +11,18 @@ class BusinessProfiles extends Table {
   TextColumn get city => text().nullable()();
   TextColumn get state => text().nullable()();
   TextColumn get country => text().withDefault(const Constant('Nigeria'))();
-  /// Tax ID
+
+  // Tax identification number shown on invoices
   TextColumn get tin => text().nullable()();
-  /// Local file path to logo image
+
+  // Absolute path to logo image on device storage
   TextColumn get logoPath => text().nullable()();
+
   TextColumn get accentColor => text().withDefault(const Constant('#0A0A0A'))();
   TextColumn get invoicePrefix => text().withDefault(const Constant('INV'))();
   IntColumn get nextInvoiceNumber => integer().withDefault(const Constant(1))();
-  /// Nigeria VAT default rate
+
+  // Nigeria VAT default rate (percent)
   RealColumn get defaultVatRate => real().withDefault(const Constant(7.5))();
   BoolColumn get vatEnabledByDefault =>
       boolean().withDefault(const Constant(false))();
@@ -46,7 +50,8 @@ class Clients extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-/// Status values: draft | sent | paid | partial | overdue | voided
+// Status values: draft | sent | paid | partial | overdue | voided
+// overdue is also derived at read time when dueDate has passed and balance remains
 class Invoices extends Table {
   TextColumn get id => text()();
   TextColumn get number => text()();
@@ -89,9 +94,13 @@ class Payments extends Table {
   TextColumn get invoiceId => text().references(Invoices, #id)();
   RealColumn get amount => real()();
   DateTimeColumn get paidAt => dateTime()();
-  /// transfer, cash, card, pos
+
+  // transfer | cash | card | pos
   TextColumn get method => text().nullable()();
+
+  // Bank transfer reference / receipt number
   TextColumn get reference => text().nullable()();
+
   TextColumn get notes => text().nullable()();
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
 

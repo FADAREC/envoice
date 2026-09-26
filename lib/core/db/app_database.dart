@@ -46,6 +46,7 @@ class AppDatabase extends _$AppDatabase {
         .write(data.copyWith(updatedAt: Value(DateTime.now())));
   }
 
+  /// Sequential invoice numbers: INV-0001, INV-0002, ...
   Future<String> allocateInvoiceNumber() async {
     final profile = await getBusinessProfile();
     final prefix = profile?.invoicePrefix ?? 'INV';
@@ -57,6 +58,12 @@ class AppDatabase extends _$AppDatabase {
           .write(BusinessProfilesCompanion(
         nextInvoiceNumber: Value(next + 1),
         updatedAt: Value(DateTime.now()),
+      ));
+    } else {
+      // Create a minimal profile so numbering still advances
+      await into(businessProfiles).insert(BusinessProfilesCompanion.insert(
+        companyName: 'My Business',
+        nextInvoiceNumber: const Value(2),
       ));
     }
 
@@ -152,7 +159,22 @@ class AppDatabase extends _$AppDatabase {
     });
   }
 
-  // ── Payments ──────────────────────────────────────────────────
+  /// Effective display status: overdue wins when balance remains past due date.
+  static String effectiveStatus(Invoice inv, {DateTime? now}) {
+    final n = now ?? DateTime.now();
+    final remaining = inv.total - inv.amountPaid;
+    if (inv.status == 'voided' || inv.status == 'paid' || inv.status == 'draft') {
+      return inv.status;
+    }
+    if (inv.dueDate != null &&
+        inv.dueDate!.isBefore(n) &&
+        remaining > 0.001) {
+      return 'overdue';
+    }
+    return inv.status;
+  }
+
+  // ── Payments (supports multiple partial payments per invoice) ─
 
   Future<List<Payment>> getPaymentsForInvoice(String invoiceId) {
     return (select(payments)
@@ -189,47 +211,78 @@ class AppDatabase extends _$AppDatabase {
     });
   }
 
-  // ── Dashboard aggregates ──────────────────────────────────────
+  // ── Dashboard / money owed ────────────────────────────────────
 
   Future<DashboardStats> getDashboardStats() async {
     final all = await getAllInvoices();
+    final clients = await getAllClients();
+    final clientMap = {for (final c in clients) c.id: c};
     final now = DateTime.now();
     final monthStart = DateTime(now.year, now.month, 1);
 
     double outstanding = 0;
     double paidThisMonth = 0;
     int overdueCount = 0;
+    final debtors = <OutstandingEntry>[];
 
     for (final inv in all) {
-      if (inv.status == 'voided') continue;
+      if (inv.status == 'voided' || inv.status == 'draft') continue;
 
       final remaining = inv.total - inv.amountPaid;
-      if (remaining > 0.001 && inv.status != 'draft') {
-        outstanding += remaining;
+      if (remaining <= 0.001) {
+        if (inv.status == 'paid' &&
+            inv.updatedAt.isAfter(monthStart.subtract(const Duration(seconds: 1)))) {
+          paidThisMonth += inv.total;
+        }
+        continue;
       }
 
-      if (inv.status == 'paid' &&
-          inv.updatedAt.isAfter(monthStart.subtract(const Duration(seconds: 1)))) {
-        paidThisMonth += inv.total;
-      }
+      outstanding += remaining;
+      final isOverdue = inv.dueDate != null && inv.dueDate!.isBefore(now);
+      if (isOverdue) overdueCount++;
 
-      if (inv.dueDate != null &&
-          inv.dueDate!.isBefore(now) &&
-          remaining > 0.001 &&
-          inv.status != 'draft' &&
-          inv.status != 'paid') {
-        overdueCount++;
-      }
+      final client = clientMap[inv.clientId];
+      debtors.add(OutstandingEntry(
+        invoice: inv,
+        clientName: client?.name ?? 'Unknown',
+        clientPhone: client?.phone,
+        remaining: remaining,
+        isOverdue: isOverdue,
+      ));
     }
+
+    // Oldest first (due date, then issue date)
+    debtors.sort((a, b) {
+      final ad = a.invoice.dueDate ?? a.invoice.issueDate;
+      final bd = b.invoice.dueDate ?? b.invoice.issueDate;
+      return ad.compareTo(bd);
+    });
 
     return DashboardStats(
       outstanding: outstanding,
       paidThisMonth: paidThisMonth,
       overdueCount: overdueCount,
       invoiceCount: all.length,
-      clientCount: (await getAllClients()).length,
+      clientCount: clients.length,
+      debtors: debtors,
     );
   }
+}
+
+class OutstandingEntry {
+  final Invoice invoice;
+  final String clientName;
+  final String? clientPhone;
+  final double remaining;
+  final bool isOverdue;
+
+  const OutstandingEntry({
+    required this.invoice,
+    required this.clientName,
+    required this.clientPhone,
+    required this.remaining,
+    required this.isOverdue,
+  });
 }
 
 class DashboardStats {
@@ -238,6 +291,7 @@ class DashboardStats {
   final int overdueCount;
   final int invoiceCount;
   final int clientCount;
+  final List<OutstandingEntry> debtors;
 
   const DashboardStats({
     required this.outstanding,
@@ -245,6 +299,7 @@ class DashboardStats {
     required this.overdueCount,
     required this.invoiceCount,
     required this.clientCount,
+    this.debtors = const [],
   });
 }
 
