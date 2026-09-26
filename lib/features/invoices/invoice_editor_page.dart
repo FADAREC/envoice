@@ -7,6 +7,7 @@ import '../../core/db/database_provider.dart';
 import '../../core/db/app_database.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/money.dart';
+import '../clients/clients_page.dart';
 
 class _LineItem {
   String description;
@@ -50,6 +51,8 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
   @override
   void initState() {
     super.initState();
+    // Default due in 7 days for new invoices
+    _dueDate = DateTime.now().add(const Duration(days: 7));
     _load();
   }
 
@@ -89,10 +92,47 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
     if (mounted) setState(() => _loading = false);
   }
 
+  Future<void> _refreshClients({String? selectId}) async {
+    final db = ref.read(databaseProvider);
+    final list = await db.getAllClients();
+    if (!mounted) return;
+    setState(() {
+      _clients = list;
+      if (selectId != null) _clientId = selectId;
+    });
+  }
+
+  Future<void> _addClientInline() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const ClientEditorPage()),
+    );
+    final db = ref.read(databaseProvider);
+    final list = await db.getAllClients();
+    if (!mounted) return;
+    // Select the most recently updated client if none selected
+    setState(() {
+      _clients = list;
+      if (_clientId == null && list.isNotEmpty) {
+        list.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+        _clientId = list.first.id;
+      }
+    });
+  }
+
   double get _subtotal => _items.fold(0.0, (s, i) => s + i.amount);
   double get _afterDiscount => (_subtotal - _discount).clamp(0, double.infinity);
   double get _vatAmount => _vatEnabled ? _afterDiscount * (_vatRate / 100) : 0;
   double get _total => _afterDiscount + _vatAmount;
+
+  Future<void> _pickDueDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _dueDate ?? DateTime.now().add(const Duration(days: 7)),
+      firstDate: DateTime.now().subtract(const Duration(days: 365)),
+      lastDate: DateTime.now().add(const Duration(days: 365 * 3)),
+    );
+    if (picked != null) setState(() => _dueDate = picked);
+  }
 
   Future<void> _save({required String status}) async {
     if (_clientId == null) {
@@ -171,32 +211,75 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
     }
 
     return Scaffold(
+      backgroundColor: AppColors.white,
       appBar: AppBar(
         title: Text(_existingId == null ? 'New invoice' : 'Edit invoice'),
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(24, 8, 24, 120),
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 120),
         children: [
-          Text('Client', style: Theme.of(context).textTheme.bodySmall),
+          Text('Client', style: Theme.of(context).textTheme.labelMedium),
           const SizedBox(height: 8),
-          DropdownButtonFormField<String>(
-            value: _clientId,
-            items: _clients
-                .map((c) => DropdownMenuItem(value: c.id, child: Text(c.name)))
-                .toList(),
-            onChanged: (v) => setState(() => _clientId = v),
-            decoration: const InputDecoration(hintText: 'Select client'),
-          ),
           if (_clients.isEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                'Add a client first from the Clients tab',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: AppColors.warning,
-                    ),
+            OutlinedButton.icon(
+              onPressed: _addClientInline,
+              icon: const Icon(Icons.person_add_alt_1, size: 18),
+              label: const Text('Add first client'),
+            )
+          else ...[
+            DropdownButtonFormField<String>(
+              value: _clientId,
+              items: _clients
+                  .map((c) => DropdownMenuItem(
+                        value: c.id,
+                        child: Text(
+                          c.company != null && c.company!.isNotEmpty
+                              ? '${c.name} · ${c.company}'
+                              : c.name,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ))
+                  .toList(),
+              onChanged: (v) => setState(() => _clientId = v),
+              decoration: const InputDecoration(hintText: 'Select client'),
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: _addClientInline,
+                child: const Text('New client'),
               ),
             ),
+          ],
+
+          const SizedBox(height: 8),
+          Text('Due date', style: Theme.of(context).textTheme.labelMedium),
+          const SizedBox(height: 8),
+          Material(
+            color: AppColors.fill,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              onTap: _pickDueDate,
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _dueDate == null
+                            ? 'No due date'
+                            : _fmt(_dueDate!),
+                        style: Theme.of(context).textTheme.bodyLarge,
+                      ),
+                    ),
+                    const Icon(Icons.calendar_today_outlined, size: 18, color: AppColors.secondary),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
           const SizedBox(height: 24),
           Text('Line items', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 12),
@@ -255,7 +338,7 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
       ),
       bottomNavigationBar: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
           child: Row(
             children: [
               Expanded(
@@ -340,6 +423,9 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
       ),
     );
   }
+
+  String _fmt(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
 }
 
 class _TotalRow extends StatelessWidget {
