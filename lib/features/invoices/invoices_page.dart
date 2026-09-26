@@ -123,8 +123,10 @@ class _InvoicesPageState extends ConsumerState<InvoicesPage> {
                     itemCount: list.length,
                     itemBuilder: (context, i) {
                       final inv = list[i];
+                      final status = AppDatabase.effectiveStatus(inv);
                       return _InvoiceRow(
                         invoice: inv,
+                        status: status,
                         onTap: () async {
                           HapticFeedback.selectionClick();
                           await Navigator.of(context).push(
@@ -147,22 +149,10 @@ class _InvoicesPageState extends ConsumerState<InvoicesPage> {
   }
 
   List<Invoice> _applyFilter(List<Invoice> invoices) {
-    final now = DateTime.now();
-    if (_filter == 'overdue') {
-      return invoices.where((i) {
-        final remaining = i.total - i.amountPaid;
-        return i.dueDate != null &&
-            i.dueDate!.isBefore(now) &&
-            remaining > 0.001 &&
-            i.status != 'draft' &&
-            i.status != 'paid' &&
-            i.status != 'voided';
-      }).toList();
-    }
-    if (_filter != 'all') {
-      return invoices.where((i) => i.status == _filter).toList();
-    }
-    return invoices;
+    if (_filter == 'all') return invoices;
+    return invoices
+        .where((i) => AppDatabase.effectiveStatus(i) == _filter)
+        .toList();
   }
 
   Future<void> _create(BuildContext context) async {
@@ -176,9 +166,14 @@ class _InvoicesPageState extends ConsumerState<InvoicesPage> {
 
 class _InvoiceRow extends StatelessWidget {
   final Invoice invoice;
+  final String status;
   final VoidCallback onTap;
 
-  const _InvoiceRow({required this.invoice, required this.onTap});
+  const _InvoiceRow({
+    required this.invoice,
+    required this.status,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -195,14 +190,11 @@ class _InvoiceRow extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      inv.number,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
+                    Text(inv.number, style: Theme.of(context).textTheme.titleMedium),
                     const SizedBox(height: 6),
                     Row(
                       children: [
-                        StatusBadge(status: inv.status),
+                        StatusBadge(status: status),
                         const SizedBox(width: 8),
                         Text(
                           _fmt(inv.issueDate),

@@ -9,6 +9,7 @@ import '../../core/db/database_provider.dart';
 import '../../core/db/app_database.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/money.dart';
+import '../../core/utils/whatsapp.dart';
 import '../../core/pdf/invoice_pdf.dart';
 import '../../core/widgets/status_badge.dart';
 import 'invoice_editor_page.dart';
@@ -29,7 +30,7 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
   List<InvoiceItem> _items = [];
   List<Payment> _payments = [];
   bool _loading = true;
-  bool _sharing = false;
+  bool _busy = false;
 
   @override
   void initState() {
@@ -61,37 +62,57 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
     }
   }
 
-  Future<void> _sharePdf() async {
-    if (_invoice == null || _client == null || _sharing) return;
-    HapticFeedback.mediumImpact();
-    setState(() => _sharing = true);
-    try {
-      final bytes = await buildInvoicePdf(
-        invoice: _invoice!,
-        client: _client!,
-        business: _business,
-        items: _items,
-        payments: _payments,
-      );
-      await Printing.sharePdf(
-        bytes: bytes,
-        filename: '${_invoice!.number}.pdf',
-      );
-    } finally {
-      if (mounted) setState(() => _sharing = false);
-    }
-  }
-
-  Future<void> _previewPdf() async {
-    if (_invoice == null || _client == null) return;
-    HapticFeedback.selectionClick();
-    final bytes = await buildInvoicePdf(
+  Future<List<int>> _pdfBytes() async {
+    return buildInvoicePdf(
       invoice: _invoice!,
       client: _client!,
       business: _business,
       items: _items,
       payments: _payments,
     );
+  }
+
+  Future<void> _sharePdf() async {
+    if (_invoice == null || _client == null || _busy) return;
+    HapticFeedback.mediumImpact();
+    setState(() => _busy = true);
+    try {
+      final bytes = await _pdfBytes();
+      final text = buildInvoiceShareMessage(
+        invoice: _invoice!,
+        clientName: _client!.name,
+        businessName: _business?.companyName,
+      );
+      await shareInvoicePdf(
+        bytes: bytes,
+        filename: '${_invoice!.number}.pdf',
+        text: text,
+      );
+      // Mark draft as sent after first share
+      if (_invoice!.status == 'draft') {
+        await ref.read(databaseProvider).updateInvoiceStatus(_invoice!.id, 'sent');
+        await _load();
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _remind() async {
+    if (_invoice == null || _client == null) return;
+    HapticFeedback.selectionClick();
+    final text = buildReminderMessage(
+      invoice: _invoice!,
+      clientName: _client!.name,
+      businessName: _business?.companyName,
+    );
+    await shareText(text);
+  }
+
+  Future<void> _previewPdf() async {
+    if (_invoice == null || _client == null) return;
+    HapticFeedback.selectionClick();
+    final bytes = await _pdfBytes();
     if (!mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute(
@@ -102,9 +123,15 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
             actions: [
               TextButton(
                 onPressed: () async {
-                  await Printing.sharePdf(
+                  final text = buildInvoiceShareMessage(
+                    invoice: _invoice!,
+                    clientName: _client!.name,
+                    businessName: _business?.companyName,
+                  );
+                  await shareInvoicePdf(
                     bytes: bytes,
                     filename: '${_invoice!.number}.pdf',
+                    text: text,
                   );
                 },
                 child: const Text('Share'),
@@ -130,6 +157,7 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
       text: ((_invoice!.total - _invoice!.amountPaid).clamp(0, double.infinity))
           .toStringAsFixed(2),
     );
+    final referenceController = TextEditingController();
     String method = 'transfer';
 
     final ok = await showModalBottomSheet<bool>(
@@ -195,6 +223,15 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
                         ),
                     ],
                   ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: referenceController,
+                    style: Theme.of(ctx).textTheme.bodyLarge,
+                    decoration: const InputDecoration(
+                      labelText: 'Reference (optional)',
+                      hintText: 'Transfer ref / receipt no.',
+                    ),
+                  ),
                   const SizedBox(height: 24),
                   ElevatedButton(
                     onPressed: () => Navigator.pop(ctx, true),
@@ -214,12 +251,14 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
 
     HapticFeedback.lightImpact();
     final db = ref.read(databaseProvider);
+    final refText = referenceController.text.trim();
     await db.addPayment(PaymentsCompanion(
       id: Value(const Uuid().v4()),
       invoiceId: Value(_invoice!.id),
       amount: Value(amount),
       paidAt: Value(DateTime.now()),
       method: Value(method),
+      reference: Value(refText.isEmpty ? null : refText),
     ));
     await _load();
   }
@@ -240,6 +279,7 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
 
     final inv = _invoice!;
     final remaining = inv.total - inv.amountPaid;
+    final status = AppDatabase.effectiveStatus(inv);
     final company = _business?.companyName ?? 'Your business';
 
     return Scaffold(
@@ -262,9 +302,8 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
       ),
       body: ListView(
         physics: const BouncingScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 120),
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 140),
         children: [
-          // Hero amount block (mirrors PDF)
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(24),
@@ -296,14 +335,16 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
                 const SizedBox(height: 12),
                 Row(
                   children: [
-                    StatusBadge(status: inv.status),
+                    StatusBadge(status: status),
                     if (inv.dueDate != null) ...[
                       const SizedBox(width: 12),
                       Text(
                         'Due ${_fmt(inv.dueDate!)}',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               fontWeight: FontWeight.w600,
-                              color: AppColors.ink,
+                              color: status == 'overdue'
+                                  ? AppColors.danger
+                                  : AppColors.ink,
                             ),
                       ),
                     ],
@@ -313,9 +354,27 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
             ),
           ),
 
-          const SizedBox(height: 28),
+          const SizedBox(height: 20),
 
-          // Share row
+          // Primary: share PDF to WhatsApp etc.
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _busy ? null : _sharePdf,
+              icon: _busy
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.ios_share, size: 18),
+              label: Text(_busy ? 'Preparing…' : 'Share PDF'),
+            ),
+          ),
+          const SizedBox(height: 10),
           Row(
             children: [
               Expanded(
@@ -325,23 +384,16 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
                   label: const Text('Preview'),
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _sharing ? null : _sharePdf,
-                  icon: _sharing
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Icon(Icons.ios_share, size: 18),
-                  label: Text(_sharing ? 'Preparing…' : 'Share PDF'),
+              if (remaining > 0.001) ...[
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _remind,
+                    icon: const Icon(Icons.chat_bubble_outline, size: 18),
+                    label: const Text('Remind'),
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
 
@@ -351,6 +403,8 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
           Text(company, style: Theme.of(context).textTheme.titleMedium),
           if (_business?.email != null)
             Text(_business!.email!, style: Theme.of(context).textTheme.bodySmall),
+          if (_business?.tin != null)
+            Text('TIN ${_business!.tin}', style: Theme.of(context).textTheme.bodySmall),
 
           const SizedBox(height: 20),
 
@@ -376,10 +430,7 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          item.description,
-                          style: Theme.of(context).textTheme.bodyLarge,
-                        ),
+                        Text(item.description, style: Theme.of(context).textTheme.bodyLarge),
                         const SizedBox(height: 2),
                         Text(
                           '${_qty(item.quantity)} × ${formatMoney(item.unitPrice, symbol: inv.currencySymbol)}',
@@ -429,6 +480,7 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
                             [
                               _fmt(p.paidAt),
                               if (p.method != null) p.method!,
+                              if (p.reference != null) 'ref ${p.reference}',
                             ].join(' · '),
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
