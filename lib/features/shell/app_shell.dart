@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../dashboard/dashboard_page.dart';
 import '../invoices/invoices_page.dart';
@@ -7,14 +8,14 @@ import '../clients/clients_page.dart';
 import '../settings/settings_page.dart';
 import '../../core/theme/app_theme.dart';
 
-class AppShell extends StatefulWidget {
+class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key});
 
   @override
-  State<AppShell> createState() => _AppShellState();
+  ConsumerState<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends ConsumerState<AppShell> {
   int _index = 0;
 
   final _pages = const [
@@ -27,6 +28,11 @@ class _AppShellState extends State<AppShell> {
   void _onTap(int i) {
     if (i == _index) return;
     HapticFeedback.selectionClick();
+    // IndexedStack keeps tabs alive, so FutureProviders stay stale.
+    // Refresh the destination tab whenever the user opens it.
+    if (i == 0) ref.invalidate(dashboardStatsProvider);
+    if (i == 1) ref.invalidate(invoicesProvider);
+    if (i == 2) ref.invalidate(clientsProvider);
     setState(() => _index = i);
   }
 
