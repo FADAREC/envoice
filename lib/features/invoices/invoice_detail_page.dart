@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -62,7 +64,7 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
     }
   }
 
-  Future<List<int>> _pdfBytes() async {
+  Future<Uint8List> _pdfBytes() {
     return buildInvoicePdf(
       invoice: _invoice!,
       client: _client!,
