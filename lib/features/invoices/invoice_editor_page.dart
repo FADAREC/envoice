@@ -10,17 +10,34 @@ import '../../core/utils/money.dart';
 import '../clients/clients_page.dart';
 
 class _LineItem {
-  String description;
-  double quantity;
-  double unitPrice;
+  final String key;
+  final TextEditingController description;
+  final TextEditingController quantity;
+  final TextEditingController unitPrice;
 
   _LineItem({
-    this.description = '',
-    this.quantity = 1,
-    this.unitPrice = 0,
-  });
+    String? id,
+    String description = '',
+    double quantity = 1,
+    double unitPrice = 0,
+  })  : key = id ?? const Uuid().v4(),
+        description = TextEditingController(text: description),
+        quantity = TextEditingController(
+          text: quantity == 1 ? '1' : quantity.toString(),
+        ),
+        unitPrice = TextEditingController(
+          text: unitPrice == 0 ? '' : unitPrice.toStringAsFixed(0),
+        );
 
-  double get amount => quantity * unitPrice;
+  double get quantityValue => double.tryParse(quantity.text) ?? 1;
+  double get unitPriceValue => double.tryParse(unitPrice.text) ?? 0;
+  double get amount => quantityValue * unitPriceValue;
+
+  void dispose() {
+    description.dispose();
+    quantity.dispose();
+    unitPrice.dispose();
+  }
 }
 
 class InvoiceEditorPage extends ConsumerStatefulWidget {
@@ -47,11 +64,11 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
   bool _loading = true;
   String? _existingId;
   String? _existingNumber;
+  String? _currencySymbol;
 
   @override
   void initState() {
     super.initState();
-    // Default due in 7 days for new invoices
     _dueDate = DateTime.now().add(const Duration(days: 7));
     _load();
   }
@@ -63,6 +80,7 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
     if (profile != null) {
       _vatEnabled = profile.vatEnabledByDefault;
       _vatRate = profile.defaultVatRate;
+      _currencySymbol = profile.currencySymbol;
     }
 
     if (widget.invoiceId != null) {
@@ -77,7 +95,11 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
         _issueDate = inv.issueDate;
         _dueDate = inv.dueDate;
         _notes.text = inv.notes ?? '';
+        _currencySymbol = inv.currencySymbol;
         final items = await db.getInvoiceItems(inv.id);
+        for (final i in _items) {
+          i.dispose();
+        }
         _items
           ..clear()
           ..addAll(items.map((i) => _LineItem(
@@ -92,16 +114,6 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
     if (mounted) setState(() => _loading = false);
   }
 
-  Future<void> _refreshClients({String? selectId}) async {
-    final db = ref.read(databaseProvider);
-    final list = await db.getAllClients();
-    if (!mounted) return;
-    setState(() {
-      _clients = list;
-      if (selectId != null) _clientId = selectId;
-    });
-  }
-
   Future<void> _addClientInline() async {
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const ClientEditorPage()),
@@ -109,7 +121,6 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
     final db = ref.read(databaseProvider);
     final list = await db.getAllClients();
     if (!mounted) return;
-    // Select the most recently updated client if none selected
     setState(() {
       _clients = list;
       if (_clientId == null && list.isNotEmpty) {
@@ -123,6 +134,7 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
   double get _afterDiscount => (_subtotal - _discount).clamp(0, double.infinity);
   double get _vatAmount => _vatEnabled ? _afterDiscount * (_vatRate / 100) : 0;
   double get _total => _afterDiscount + _vatAmount;
+  String get _sym => _currencySymbol ?? '₦';
 
   Future<void> _pickDueDate() async {
     final picked = await showDatePicker(
@@ -141,7 +153,7 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
       );
       return;
     }
-    if (_items.every((i) => i.description.trim().isEmpty)) {
+    if (_items.every((i) => i.description.text.trim().isEmpty)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Add at least one line item')),
       );
@@ -149,50 +161,88 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
     }
 
     setState(() => _saving = true);
-    final db = ref.read(databaseProvider);
-    final id = _existingId ?? _uuid.v4();
-    final number = _existingNumber ?? await db.allocateInvoiceNumber();
-    final now = DateTime.now();
+    try {
+      final db = ref.read(databaseProvider);
+      final id = _existingId ?? _uuid.v4();
+      final now = DateTime.now();
 
-    final inv = InvoicesCompanion(
-      id: Value(id),
-      number: Value(number),
-      clientId: Value(_clientId!),
-      status: Value(status),
-      issueDate: Value(_issueDate),
-      dueDate: Value(_dueDate),
-      subtotal: Value(_subtotal),
-      discountAmount: Value(_discount),
-      vatRate: Value(_vatEnabled ? _vatRate : 0),
-      vatAmount: Value(_vatAmount),
-      total: Value(_total),
-      notes: Value(_notes.text.trim().isEmpty ? null : _notes.text.trim()),
-      createdAt: _existingId == null ? Value(now) : const Value.absent(),
-      updatedAt: Value(now),
-    );
+      final itemCompanions = <InvoiceItemsCompanion>[];
+      for (var i = 0; i < _items.length; i++) {
+        final item = _items[i];
+        if (item.description.text.trim().isEmpty) continue;
+        itemCompanions.add(InvoiceItemsCompanion(
+          id: Value(_uuid.v4()),
+          invoiceId: Value(id),
+          description: Value(item.description.text.trim()),
+          quantity: Value(item.quantityValue),
+          unitPrice: Value(item.unitPriceValue),
+          amount: Value(item.amount),
+          sortOrder: Value(i),
+        ));
+      }
 
-    final itemCompanions = <InvoiceItemsCompanion>[];
-    for (var i = 0; i < _items.length; i++) {
-      final item = _items[i];
-      if (item.description.trim().isEmpty) continue;
-      itemCompanions.add(InvoiceItemsCompanion(
-        id: Value(_uuid.v4()),
-        invoiceId: Value(id),
-        description: Value(item.description.trim()),
-        quantity: Value(item.quantity),
-        unitPrice: Value(item.unitPrice),
-        amount: Value(item.amount),
-        sortOrder: Value(i),
-      ));
+      if (_existingId == null) {
+        // New invoice: number allocation + insert are atomic
+        await db.createInvoiceWithNumber(
+          invoiceWithoutNumber: InvoicesCompanion(
+            id: Value(id),
+            number: const Value(''), // filled inside transaction
+            clientId: Value(_clientId!),
+            status: Value(status),
+            issueDate: Value(_issueDate),
+            dueDate: Value(_dueDate),
+            currencySymbol: Value(_sym),
+            subtotal: Value(_subtotal),
+            discountAmount: Value(_discount),
+            vatRate: Value(_vatEnabled ? _vatRate : 0),
+            vatAmount: Value(_vatAmount),
+            total: Value(_total),
+            notes: Value(_notes.text.trim().isEmpty ? null : _notes.text.trim()),
+            createdAt: Value(now),
+            updatedAt: Value(now),
+          ),
+          items: itemCompanions,
+        );
+      } else {
+        await db.upsertInvoice(
+          InvoicesCompanion(
+            id: Value(id),
+            number: Value(_existingNumber!),
+            clientId: Value(_clientId!),
+            status: Value(status),
+            issueDate: Value(_issueDate),
+            dueDate: Value(_dueDate),
+            currencySymbol: Value(_sym),
+            subtotal: Value(_subtotal),
+            discountAmount: Value(_discount),
+            vatRate: Value(_vatEnabled ? _vatRate : 0),
+            vatAmount: Value(_vatAmount),
+            total: Value(_total),
+            notes: Value(_notes.text.trim().isEmpty ? null : _notes.text.trim()),
+            updatedAt: Value(now),
+          ),
+          itemCompanions,
+        );
+      }
+
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not save: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
-
-    await db.upsertInvoice(inv, itemCompanions);
-    if (mounted) Navigator.of(context).pop();
   }
 
   @override
   void dispose() {
     _notes.dispose();
+    for (final i in _items) {
+      i.dispose();
+    }
     super.dispose();
   }
 
@@ -251,7 +301,6 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
               ),
             ),
           ],
-
           const SizedBox(height: 8),
           Text('Due date', style: Theme.of(context).textTheme.labelMedium),
           const SizedBox(height: 8),
@@ -267,23 +316,21 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
                   children: [
                     Expanded(
                       child: Text(
-                        _dueDate == null
-                            ? 'No due date'
-                            : _fmt(_dueDate!),
+                        _dueDate == null ? 'No due date' : _fmt(_dueDate!),
                         style: Theme.of(context).textTheme.bodyLarge,
                       ),
                     ),
-                    const Icon(Icons.calendar_today_outlined, size: 18, color: AppColors.secondary),
+                    const Icon(Icons.calendar_today_outlined,
+                        size: 18, color: AppColors.secondary),
                   ],
                 ),
               ),
             ),
           ),
-
           const SizedBox(height: 24),
           Text('Line items', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 12),
-          for (var i = 0; i < _items.length; i++) _buildItemRow(i),
+          for (final item in _items) _buildItemRow(item),
           TextButton.icon(
             onPressed: () => setState(() => _items.add(_LineItem())),
             icon: const Icon(Icons.add, size: 18),
@@ -295,7 +342,8 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
           Row(
             children: [
               Expanded(
-                child: Text('Discount (₦)', style: Theme.of(context).textTheme.bodyMedium),
+                child: Text('Discount ($_sym)',
+                    style: Theme.of(context).textTheme.bodyMedium),
               ),
               SizedBox(
                 width: 120,
@@ -319,12 +367,17 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
             onChanged: (v) => setState(() => _vatEnabled = v),
           ),
           const SizedBox(height: 8),
-          _TotalRow(label: 'Subtotal', value: formatMoney(_subtotal)),
+          _TotalRow(label: 'Subtotal', value: formatMoney(_subtotal, symbol: _sym)),
           if (_discount > 0)
-            _TotalRow(label: 'Discount', value: '- ${formatMoney(_discount)}'),
+            _TotalRow(
+                label: 'Discount',
+                value: '- ${formatMoney(_discount, symbol: _sym)}'),
           if (_vatEnabled)
-            _TotalRow(label: 'VAT', value: formatMoney(_vatAmount)),
-          _TotalRow(label: 'Total', value: formatMoney(_total), bold: true),
+            _TotalRow(label: 'VAT', value: formatMoney(_vatAmount, symbol: _sym)),
+          _TotalRow(
+              label: 'Total',
+              value: formatMoney(_total, symbol: _sym),
+              bold: true),
           const SizedBox(height: 24),
           TextField(
             controller: _notes,
@@ -370,41 +423,36 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
     );
   }
 
-  Widget _buildItemRow(int index) {
-    final item = _items[index];
+  Widget _buildItemRow(_LineItem item) {
     return Padding(
+      key: ValueKey(item.key),
       padding: const EdgeInsets.only(bottom: 16),
       child: Column(
         children: [
-          TextFormField(
-            initialValue: item.description,
+          TextField(
+            controller: item.description,
             decoration: const InputDecoration(hintText: 'Description'),
-            onChanged: (v) => item.description = v,
+            onChanged: (_) => setState(() {}),
           ),
           const SizedBox(height: 8),
           Row(
             children: [
               Expanded(
-                child: TextFormField(
-                  initialValue: item.quantity == 1 ? '1' : item.quantity.toString(),
+                child: TextField(
+                  controller: item.quantity,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(labelText: 'Qty'),
-                  onChanged: (v) => setState(() {
-                    item.quantity = double.tryParse(v) ?? 1;
-                  }),
+                  onChanged: (_) => setState(() {}),
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
                 flex: 2,
-                child: TextFormField(
-                  initialValue:
-                      item.unitPrice == 0 ? '' : item.unitPrice.toStringAsFixed(0),
+                child: TextField(
+                  controller: item.unitPrice,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(labelText: 'Unit price'),
-                  onChanged: (v) => setState(() {
-                    item.unitPrice = double.tryParse(v) ?? 0;
-                  }),
+                  onChanged: (_) => setState(() {}),
                 ),
               ),
               const SizedBox(width: 8),
@@ -413,7 +461,10 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
                 child: IconButton(
                   onPressed: _items.length == 1
                       ? null
-                      : () => setState(() => _items.removeAt(index)),
+                      : () => setState(() {
+                            item.dispose();
+                            _items.remove(item);
+                          }),
                   icon: const Icon(Icons.close, size: 18),
                 ),
               ),

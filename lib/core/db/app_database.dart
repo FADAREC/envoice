@@ -29,6 +29,14 @@ class AppDatabase extends _$AppDatabase {
         onCreate: (m) async {
           await m.createAll();
         },
+        // Future schema bumps go here. Never wipe user data.
+        onUpgrade: (m, from, to) async {
+          // Example when bumping to 2:
+          // if (from < 2) { await m.addColumn(payments, payments.foo); }
+        },
+        beforeOpen: (details) async {
+          await customStatement('PRAGMA foreign_keys = ON');
+        },
       );
 
   // ── Business profile ──────────────────────────────────────────
@@ -44,30 +52,6 @@ class AppDatabase extends _$AppDatabase {
     }
     return (update(businessProfiles)..where((t) => t.id.equals(existing.id)))
         .write(data.copyWith(updatedAt: Value(DateTime.now())));
-  }
-
-  /// Sequential invoice numbers: INV-0001, INV-0002, ...
-  Future<String> allocateInvoiceNumber() async {
-    final profile = await getBusinessProfile();
-    final prefix = profile?.invoicePrefix ?? 'INV';
-    final next = profile?.nextInvoiceNumber ?? 1;
-    final number = '$prefix-${next.toString().padLeft(4, '0')}';
-
-    if (profile != null) {
-      await (update(businessProfiles)..where((t) => t.id.equals(profile.id)))
-          .write(BusinessProfilesCompanion(
-        nextInvoiceNumber: Value(next + 1),
-        updatedAt: Value(DateTime.now()),
-      ));
-    } else {
-      // Create a minimal profile so numbering still advances
-      await into(businessProfiles).insert(BusinessProfilesCompanion.insert(
-        companyName: 'My Business',
-        nextInvoiceNumber: const Value(2),
-      ));
-    }
-
-    return number;
   }
 
   // ── Clients ───────────────────────────────────────────────────
@@ -98,8 +82,20 @@ class AppDatabase extends _$AppDatabase {
     return into(clients).insertOnConflictUpdate(data);
   }
 
-  Future<void> deleteClient(String id) {
-    return (delete(clients)..where((t) => t.id.equals(id))).go();
+  /// Returns false if client still has invoices (caller should show message).
+  Future<bool> deleteClientIfUnused(String id) async {
+    final linked = await (select(invoices)..where((t) => t.clientId.equals(id)))
+        .get();
+    if (linked.isNotEmpty) return false;
+    await (delete(clients)..where((t) => t.id.equals(id))).go();
+    return true;
+  }
+
+  Future<int> countInvoicesForClient(String clientId) async {
+    final rows = await (select(invoices)
+          ..where((t) => t.clientId.equals(clientId)))
+        .get();
+    return rows.length;
   }
 
   // ── Invoices ──────────────────────────────────────────────────
@@ -126,6 +122,44 @@ class AppDatabase extends _$AppDatabase {
           ..where((t) => t.invoiceId.equals(invoiceId))
           ..orderBy([(t) => OrderingTerm.asc(t.sortOrder)]))
         .get();
+  }
+
+  /// Allocate sequential number and insert invoice + items in ONE transaction.
+  /// Prevents burned numbers when the process dies mid-save.
+  Future<String> createInvoiceWithNumber({
+    required InvoicesCompanion invoiceWithoutNumber,
+    required List<InvoiceItemsCompanion> items,
+  }) async {
+    return transaction(() async {
+      final profile = await getBusinessProfile();
+      final prefix = profile?.invoicePrefix ?? 'INV';
+      final next = profile?.nextInvoiceNumber ?? 1;
+      final number = '$prefix-${next.toString().padLeft(4, '0')}';
+
+      if (profile != null) {
+        await (update(businessProfiles)..where((t) => t.id.equals(profile.id)))
+            .write(BusinessProfilesCompanion(
+          nextInvoiceNumber: Value(next + 1),
+          updatedAt: Value(DateTime.now()),
+        ));
+      } else {
+        await into(businessProfiles).insert(BusinessProfilesCompanion.insert(
+          companyName: 'My Business',
+          nextInvoiceNumber: const Value(2),
+        ));
+      }
+
+      final inv = invoiceWithoutNumber.copyWith(number: Value(number));
+      await into(invoices).insertOnConflictUpdate(inv);
+      final invId = inv.id.value;
+      await (delete(invoiceItems)..where((t) => t.invoiceId.equals(invId))).go();
+      for (final item in items) {
+        await into(invoiceItems).insert(
+          item.copyWith(invoiceId: Value(invId)),
+        );
+      }
+      return number;
+    });
   }
 
   Future<void> upsertInvoice(
@@ -159,7 +193,8 @@ class AppDatabase extends _$AppDatabase {
     });
   }
 
-  /// Effective display status: overdue wins when balance remains past due date.
+  /// Single source of truth for display status.
+  /// Stored column never holds 'overdue'; overdue is always derived.
   static String effectiveStatus(Invoice inv, {DateTime? now}) {
     final n = now ?? DateTime.now();
     final remaining = inv.total - inv.amountPaid;
@@ -174,7 +209,7 @@ class AppDatabase extends _$AppDatabase {
     return inv.status;
   }
 
-  // ── Payments (supports multiple partial payments per invoice) ─
+  // ── Payments ──────────────────────────────────────────────────
 
   Future<List<Payment>> getPaymentsForInvoice(String invoiceId) {
     return (select(payments)
@@ -186,32 +221,42 @@ class AppDatabase extends _$AppDatabase {
   Future<void> addPayment(PaymentsCompanion payment) async {
     await transaction(() async {
       await into(payments).insert(payment);
-      final invoiceId = payment.invoiceId.value;
-      final all = await getPaymentsForInvoice(invoiceId);
-      final paid = all.fold<double>(0, (s, p) => s + p.amount);
-      final inv = await getInvoice(invoiceId);
-      if (inv == null) return;
-
-      String status;
-      if (paid <= 0) {
-        status = inv.status == 'draft' ? 'draft' : 'sent';
-      } else if (paid + 0.001 >= inv.total) {
-        status = 'paid';
-      } else {
-        status = 'partial';
-      }
-
-      await (update(invoices)..where((t) => t.id.equals(invoiceId))).write(
-        InvoicesCompanion(
-          amountPaid: Value(paid),
-          status: Value(status),
-          updatedAt: Value(DateTime.now()),
-        ),
-      );
+      await _recomputePaid(payment.invoiceId.value);
     });
   }
 
-  // ── Dashboard / money owed ────────────────────────────────────
+  Future<void> deletePayment(String paymentId, String invoiceId) async {
+    await transaction(() async {
+      await (delete(payments)..where((t) => t.id.equals(paymentId))).go();
+      await _recomputePaid(invoiceId);
+    });
+  }
+
+  Future<void> _recomputePaid(String invoiceId) async {
+    final all = await getPaymentsForInvoice(invoiceId);
+    final paid = all.fold<double>(0, (s, p) => s + p.amount);
+    final inv = await getInvoice(invoiceId);
+    if (inv == null) return;
+
+    String status;
+    if (paid <= 0) {
+      status = inv.status == 'draft' ? 'draft' : 'sent';
+    } else if (paid + 0.001 >= inv.total) {
+      status = 'paid';
+    } else {
+      status = 'partial';
+    }
+
+    await (update(invoices)..where((t) => t.id.equals(invoiceId))).write(
+      InvoicesCompanion(
+        amountPaid: Value(paid),
+        status: Value(status),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
+  // ── Dashboard ─────────────────────────────────────────────────
 
   Future<DashboardStats> getDashboardStats() async {
     final all = await getAllInvoices();
@@ -238,7 +283,7 @@ class AppDatabase extends _$AppDatabase {
       }
 
       outstanding += remaining;
-      final isOverdue = inv.dueDate != null && inv.dueDate!.isBefore(now);
+      final isOverdue = effectiveStatus(inv, now: now) == 'overdue';
       if (isOverdue) overdueCount++;
 
       final client = clientMap[inv.clientId];
@@ -251,7 +296,6 @@ class AppDatabase extends _$AppDatabase {
       ));
     }
 
-    // Oldest first (due date, then issue date)
     debtors.sort((a, b) {
       final ad = a.invoice.dueDate ?? a.invoice.issueDate;
       final bd = b.invoice.dueDate ?? b.invoice.issueDate;
