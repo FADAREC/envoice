@@ -8,11 +8,28 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/money.dart';
 import '../../core/widgets/empty_state.dart';
 import '../../core/widgets/status_badge.dart';
+import '../clients/clients_page.dart';
 import 'invoice_editor_page.dart';
 import 'invoice_detail_page.dart';
 
-final invoicesProvider = FutureProvider<List<Invoice>>((ref) async {
-  return ref.watch(databaseProvider).getAllInvoices();
+class InvoiceListItem {
+  final Invoice invoice;
+  final String clientName;
+
+  const InvoiceListItem({required this.invoice, required this.clientName});
+}
+
+final invoicesProvider = FutureProvider<List<InvoiceListItem>>((ref) async {
+  final db = ref.watch(databaseProvider);
+  final invoices = await db.getAllInvoices();
+  final clients = await db.getAllClients();
+  final map = {for (final c in clients) c.id: c.name};
+  return invoices
+      .map((i) => InvoiceListItem(
+            invoice: i,
+            clientName: map[i.clientId] ?? 'Unknown client',
+          ))
+      .toList();
 });
 
 class InvoicesPage extends ConsumerStatefulWidget {
@@ -102,8 +119,8 @@ class _InvoicesPageState extends ConsumerState<InvoicesPage> {
                   ),
                 ),
                 error: (e, _) => Center(child: Text('$e')),
-                data: (invoices) {
-                  final list = _applyFilter(invoices);
+                data: (items) {
+                  final list = _applyFilter(items);
 
                   if (list.isEmpty) {
                     return EmptyState(
@@ -117,27 +134,39 @@ class _InvoicesPageState extends ConsumerState<InvoicesPage> {
                     );
                   }
 
-                  return ListView.builder(
-                    physics: const BouncingScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(0, 8, 0, 24),
-                    itemCount: list.length,
-                    itemBuilder: (context, i) {
-                      final inv = list[i];
-                      final status = AppDatabase.effectiveStatus(inv);
-                      return _InvoiceRow(
-                        invoice: inv,
-                        status: status,
-                        onTap: () async {
-                          HapticFeedback.selectionClick();
-                          await Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => InvoiceDetailPage(invoiceId: inv.id),
-                            ),
-                          );
-                          ref.invalidate(invoicesProvider);
-                        },
-                      );
+                  return RefreshIndicator(
+                    onRefresh: () async {
+                      HapticFeedback.lightImpact();
+                      ref.invalidate(invoicesProvider);
                     },
+                    color: AppColors.black,
+                    child: ListView.builder(
+                      physics: const AlwaysScrollableScrollPhysics(
+                        parent: BouncingScrollPhysics(),
+                      ),
+                      padding: const EdgeInsets.fromLTRB(0, 8, 0, 24),
+                      itemCount: list.length,
+                      itemBuilder: (context, i) {
+                        final item = list[i];
+                        final inv = item.invoice;
+                        final status = AppDatabase.effectiveStatus(inv);
+                        return _InvoiceRow(
+                          invoice: inv,
+                          clientName: item.clientName,
+                          status: status,
+                          onTap: () async {
+                            HapticFeedback.selectionClick();
+                            await Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => InvoiceDetailPage(invoiceId: inv.id),
+                              ),
+                            );
+                            ref.invalidate(invoicesProvider);
+                            ref.invalidate(dashboardStatsProvider);
+                          },
+                        );
+                      },
+                    ),
                   );
                 },
               ),
@@ -148,10 +177,10 @@ class _InvoicesPageState extends ConsumerState<InvoicesPage> {
     );
   }
 
-  List<Invoice> _applyFilter(List<Invoice> invoices) {
-    if (_filter == 'all') return invoices;
-    return invoices
-        .where((i) => AppDatabase.effectiveStatus(i) == _filter)
+  List<InvoiceListItem> _applyFilter(List<InvoiceListItem> items) {
+    if (_filter == 'all') return items;
+    return items
+        .where((i) => AppDatabase.effectiveStatus(i.invoice) == _filter)
         .toList();
   }
 
@@ -161,16 +190,19 @@ class _InvoicesPageState extends ConsumerState<InvoicesPage> {
       MaterialPageRoute(builder: (_) => const InvoiceEditorPage()),
     );
     ref.invalidate(invoicesProvider);
+    ref.invalidate(dashboardStatsProvider);
   }
 }
 
 class _InvoiceRow extends StatelessWidget {
   final Invoice invoice;
+  final String clientName;
   final String status;
   final VoidCallback onTap;
 
   const _InvoiceRow({
     required this.invoice,
+    required this.clientName,
     required this.status,
     required this.onTap,
   });
@@ -178,6 +210,11 @@ class _InvoiceRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final inv = invoice;
+    final remaining = inv.total - inv.amountPaid;
+    final amount = remaining > 0.001 && status != 'paid'
+        ? remaining
+        : inv.total;
+
     return Material(
       color: AppColors.white,
       child: InkWell(
@@ -190,24 +227,42 @@ class _InvoiceRow extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(inv.number, style: Theme.of(context).textTheme.titleMedium),
-                    const SizedBox(height: 6),
+                    Text(
+                      clientName,
+                      style: Theme.of(context).textTheme.titleMedium,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
                     Row(
                       children: [
-                        StatusBadge(status: status),
-                        const SizedBox(width: 8),
                         Text(
-                          _fmt(inv.issueDate),
-                          style: Theme.of(context).textTheme.bodySmall,
+                          inv.number,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                fontWeight: FontWeight.w500,
+                              ),
                         ),
+                        const SizedBox(width: 8),
+                        StatusBadge(status: status),
                       ],
                     ),
                   ],
                 ),
               ),
-              Text(
-                formatMoney(inv.total, symbol: inv.currencySymbol),
-                style: Theme.of(context).textTheme.titleMedium,
+              const SizedBox(width: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    formatMoney(amount, symbol: inv.currencySymbol),
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _fmt(inv.issueDate),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
               ),
               const SizedBox(width: 4),
               const Icon(Icons.chevron_right, size: 18, color: AppColors.tertiary),
