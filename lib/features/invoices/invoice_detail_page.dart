@@ -88,10 +88,15 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
         filename: '${_invoice!.number}.pdf',
         text: text,
       );
-      // Mark draft as sent after first share
       if (_invoice!.status == 'draft') {
         await ref.read(databaseProvider).updateInvoiceStatus(_invoice!.id, 'sent');
         await _load();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not share: $e')),
+        );
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -101,55 +106,71 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
   Future<void> _remind() async {
     if (_invoice == null || _client == null) return;
     HapticFeedback.selectionClick();
-    final text = buildReminderMessage(
-      invoice: _invoice!,
-      clientName: _client!.name,
-      businessName: _business?.companyName,
-    );
-    await shareText(text);
+    try {
+      final text = buildReminderMessage(
+        invoice: _invoice!,
+        clientName: _client!.name,
+        businessName: _business?.companyName,
+      );
+      await shareText(text);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open share: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _previewPdf() async {
     if (_invoice == null || _client == null) return;
     HapticFeedback.selectionClick();
-    final bytes = await _pdfBytes();
-    if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => Scaffold(
-          backgroundColor: AppColors.fill,
-          appBar: AppBar(
-            title: const Text('Preview'),
-            actions: [
-              TextButton(
-                onPressed: () async {
-                  final text = buildInvoiceShareMessage(
-                    invoice: _invoice!,
-                    clientName: _client!.name,
-                    businessName: _business?.companyName,
-                  );
-                  await shareInvoicePdf(
-                    bytes: bytes,
-                    filename: '${_invoice!.number}.pdf',
-                    text: text,
-                  );
-                },
-                child: const Text('Share'),
-              ),
-            ],
-          ),
-          body: PdfPreview(
-            build: (_) async => bytes,
-            allowPrinting: true,
-            allowSharing: true,
-            canChangeOrientation: false,
-            canChangePageFormat: false,
-            canDebug: false,
-            pdfFileName: '${_invoice!.number}.pdf',
+    try {
+      final bytes = await _pdfBytes();
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => Scaffold(
+            backgroundColor: AppColors.fill,
+            appBar: AppBar(
+              title: const Text('Preview'),
+              actions: [
+                TextButton(
+                  onPressed: () async {
+                    final text = buildInvoiceShareMessage(
+                      invoice: _invoice!,
+                      clientName: _client!.name,
+                      businessName: _business?.companyName,
+                    );
+                    await shareInvoicePdf(
+                      bytes: bytes,
+                      filename: '${_invoice!.number}.pdf',
+                      text: text,
+                    );
+                  },
+                  child: const Text('Share'),
+                ),
+              ],
+            ),
+            body: PdfPreview(
+              build: (_) async => bytes,
+              allowPrinting: true,
+              allowSharing: true,
+              canChangeOrientation: false,
+              canChangePageFormat: false,
+              canDebug: false,
+              pdfFileName: '${_invoice!.number}.pdf',
+            ),
           ),
         ),
-      ),
-    );
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not preview: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _recordPayment() async {
@@ -192,11 +213,13 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
                     ),
                   ),
                   const SizedBox(height: 20),
-                  Text('Record payment', style: Theme.of(ctx).textTheme.headlineMedium),
+                  Text('Record payment',
+                      style: Theme.of(ctx).textTheme.headlineMedium),
                   const SizedBox(height: 20),
                   TextField(
                     controller: amountController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
                     autofocus: true,
                     style: Theme.of(ctx).textTheme.bodyLarge,
                     decoration: const InputDecoration(labelText: 'Amount'),
@@ -250,17 +273,62 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
     if (amount <= 0) return;
 
     HapticFeedback.lightImpact();
-    final db = ref.read(databaseProvider);
-    final refText = referenceController.text.trim();
-    await db.addPayment(PaymentsCompanion(
-      id: Value(const Uuid().v4()),
-      invoiceId: Value(_invoice!.id),
-      amount: Value(amount),
-      paidAt: Value(DateTime.now()),
-      method: Value(method),
-      reference: Value(refText.isEmpty ? null : refText),
-    ));
-    await _load();
+    try {
+      final db = ref.read(databaseProvider);
+      final refText = referenceController.text.trim();
+      await db.addPayment(PaymentsCompanion(
+        id: Value(const Uuid().v4()),
+        invoiceId: Value(_invoice!.id),
+        amount: Value(amount),
+        paidAt: Value(DateTime.now()),
+        method: Value(method),
+        reference: Value(refText.isEmpty ? null : refText),
+      ));
+      await _load();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not save payment: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _deletePayment(Payment p) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete payment?'),
+        content: Text(
+          'Remove ${formatMoney(p.amount, symbol: _invoice!.currencySymbol)} recorded on ${_fmt(p.paidAt)}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              'Delete',
+              style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    try {
+      await ref.read(databaseProvider).deletePayment(p.id, _invoice!.id);
+      await _load();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not delete: $e')),
+        );
+      }
+    }
   }
 
   @override
@@ -353,10 +421,7 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
               ],
             ),
           ),
-
           const SizedBox(height: 20),
-
-          // Primary: share PDF to WhatsApp etc.
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
@@ -396,18 +461,14 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
               ],
             ],
           ),
-
           const SizedBox(height: 32),
-
           _sectionLabel(context, 'From'),
           Text(company, style: Theme.of(context).textTheme.titleMedium),
           if (_business?.email != null)
             Text(_business!.email!, style: Theme.of(context).textTheme.bodySmall),
           if (_business?.tin != null)
             Text('TIN ${_business!.tin}', style: Theme.of(context).textTheme.bodySmall),
-
           const SizedBox(height: 20),
-
           if (_client != null) ...[
             _sectionLabel(context, 'Bill to'),
             Text(_client!.name, style: Theme.of(context).textTheme.titleMedium),
@@ -416,7 +477,6 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
             if (_client!.phone != null)
               Text(_client!.phone!, style: Theme.of(context).textTheme.bodySmall),
           ],
-
           const SizedBox(height: 28),
           _sectionLabel(context, 'Items'),
           const SizedBox(height: 4),
@@ -430,7 +490,8 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(item.description, style: Theme.of(context).textTheme.bodyLarge),
+                        Text(item.description,
+                            style: Theme.of(context).textTheme.bodyLarge),
                         const SizedBox(height: 2),
                         Text(
                           '${_qty(item.quantity)} × ${formatMoney(item.unitPrice, symbol: inv.currencySymbol)}',
@@ -446,26 +507,31 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
                 ],
               ),
             ),
-
           const Divider(height: 32),
-
-          _kv(context, 'Subtotal', formatMoney(inv.subtotal, symbol: inv.currencySymbol)),
+          _kv(context, 'Subtotal',
+              formatMoney(inv.subtotal, symbol: inv.currencySymbol)),
           if (inv.discountAmount > 0)
-            _kv(context, 'Discount', '- ${formatMoney(inv.discountAmount, symbol: inv.currencySymbol)}'),
+            _kv(context, 'Discount',
+                '- ${formatMoney(inv.discountAmount, symbol: inv.currencySymbol)}'),
           if (inv.vatAmount > 0)
-            _kv(context, 'VAT (${inv.vatRate}%)', formatMoney(inv.vatAmount, symbol: inv.currencySymbol)),
-          _kv(context, 'Total', formatMoney(inv.total, symbol: inv.currencySymbol), bold: true),
+            _kv(context, 'VAT (${inv.vatRate}%)',
+                formatMoney(inv.vatAmount, symbol: inv.currencySymbol)),
+          _kv(context, 'Total',
+              formatMoney(inv.total, symbol: inv.currencySymbol),
+              bold: true),
           if (inv.amountPaid > 0)
-            _kv(context, 'Paid', formatMoney(inv.amountPaid, symbol: inv.currencySymbol)),
+            _kv(context, 'Paid',
+                formatMoney(inv.amountPaid, symbol: inv.currencySymbol)),
           if (remaining > 0.001)
-            _kv(context, 'Balance due', formatMoney(remaining, symbol: inv.currencySymbol), bold: true),
-
+            _kv(context, 'Balance due',
+                formatMoney(remaining, symbol: inv.currencySymbol),
+                bold: true),
           if (_payments.isNotEmpty) ...[
             const SizedBox(height: 28),
             _sectionLabel(context, 'Payments'),
             for (final p in _payments)
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 10),
+                padding: const EdgeInsets.symmetric(vertical: 6),
                 child: Row(
                   children: [
                     Expanded(
@@ -487,11 +553,16 @@ class _InvoiceDetailPageState extends ConsumerState<InvoiceDetailPage> {
                         ],
                       ),
                     ),
+                    IconButton(
+                      onPressed: () => _deletePayment(p),
+                      icon: const Icon(Icons.delete_outline, size: 20),
+                      color: AppColors.secondary,
+                      tooltip: 'Delete payment',
+                    ),
                   ],
                 ),
               ),
           ],
-
           if (inv.notes != null && inv.notes!.isNotEmpty) ...[
             const SizedBox(height: 24),
             _sectionLabel(context, 'Notes'),
