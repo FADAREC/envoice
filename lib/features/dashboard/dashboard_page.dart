@@ -7,6 +7,7 @@ import '../../core/db/app_database.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/money.dart';
 import '../invoices/invoice_editor_page.dart';
+import '../invoices/invoice_detail_page.dart';
 import '../clients/clients_page.dart';
 
 final dashboardStatsProvider = FutureProvider<DashboardStats>((ref) async {
@@ -91,7 +92,18 @@ class DashboardPage extends ConsumerWidget {
                       style: TextStyle(color: AppColors.danger),
                     ),
                   ),
-                  data: (stats) => _Body(stats: stats, onNewInvoice: () => _newInvoice(context, ref)),
+                  data: (stats) => _Body(
+                    stats: stats,
+                    onNewInvoice: () => _newInvoice(context, ref),
+                    onOpenInvoice: (id) async {
+                      await Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => InvoiceDetailPage(invoiceId: id),
+                        ),
+                      );
+                      ref.invalidate(dashboardStatsProvider);
+                    },
+                  ),
                 ),
               ),
             ],
@@ -113,8 +125,13 @@ class DashboardPage extends ConsumerWidget {
 class _Body extends StatelessWidget {
   final DashboardStats stats;
   final VoidCallback onNewInvoice;
+  final Future<void> Function(String invoiceId) onOpenInvoice;
 
-  const _Body({required this.stats, required this.onNewInvoice});
+  const _Body({
+    required this.stats,
+    required this.onNewInvoice,
+    required this.onOpenInvoice,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -125,7 +142,6 @@ class _Body extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Hero money
           Text(
             'Outstanding',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -142,8 +158,6 @@ class _Body extends StatelessWidget {
                 ),
           ),
           const SizedBox(height: 28),
-
-          // Metric row
           Row(
             children: [
               Expanded(
@@ -162,10 +176,39 @@ class _Body extends StatelessWidget {
               ),
             ],
           ),
-
           const SizedBox(height: 32),
           const Divider(height: 0.5),
           const SizedBox(height: 28),
+
+          // Money owed list (must-have)
+          if (stats.debtors.isNotEmpty) ...[
+            Text(
+              'Money owed',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Oldest first',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            for (final d in stats.debtors.take(8))
+              _DebtorRow(
+                entry: d,
+                onTap: () => onOpenInvoice(d.invoice.id),
+              ),
+            if (stats.debtors.length > 8)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  '+ ${stats.debtors.length - 8} more',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            const SizedBox(height: 28),
+            const Divider(height: 0.5),
+            const SizedBox(height: 28),
+          ],
 
           Text(
             'Quick actions',
@@ -175,7 +218,7 @@ class _Body extends StatelessWidget {
           _ActionRow(
             icon: Icons.add_circle_outline,
             title: 'New invoice',
-            subtitle: 'Create and send in under a minute',
+            subtitle: 'Create and share in under a minute',
             onTap: onNewInvoice,
           ),
           const SizedBox(height: 10),
@@ -218,7 +261,7 @@ class _Body extends StatelessWidget {
                 ],
               ),
             ),
-          ] else ...[
+          ] else if (stats.debtors.isEmpty) ...[
             const SizedBox(height: 32),
             Row(
               children: [
@@ -244,6 +287,67 @@ class _Body extends StatelessWidget {
   }
 }
 
+class _DebtorRow extends StatelessWidget {
+  final OutstandingEntry entry;
+  final VoidCallback onTap;
+
+  const _DebtorRow({required this.entry, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final inv = entry.invoice;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          HapticFeedback.selectionClick();
+          onTap();
+        },
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      entry.clientName,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${inv.number}'
+                      '${inv.dueDate != null ? ' · due ${_fmt(inv.dueDate!)}' : ''}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: entry.isOverdue
+                                ? AppColors.danger
+                                : AppColors.secondary,
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              Text(
+                formatMoney(entry.remaining, symbol: inv.currencySymbol),
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: entry.isOverdue ? AppColors.danger : AppColors.ink,
+                    ),
+              ),
+              const SizedBox(width: 4),
+              const Icon(Icons.chevron_right, size: 18, color: AppColors.tertiary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _fmt(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}';
+}
+
 class _Metric extends StatelessWidget {
   final String label;
   final String value;
@@ -262,10 +366,7 @@ class _Metric extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            label,
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
+          Text(label, style: Theme.of(context).textTheme.bodySmall),
           const SizedBox(height: 4),
           Text(
             value,
@@ -312,10 +413,7 @@ class _ActionRow extends StatelessWidget {
                   children: [
                     Text(title, style: Theme.of(context).textTheme.titleMedium),
                     const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
+                    Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
                   ],
                 ),
               ),
