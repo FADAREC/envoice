@@ -70,8 +70,7 @@ class DashboardPage extends ConsumerWidget {
                   ),
                 ),
               ),
-              const Sli
-verToBoxAdapter(child: SizedBox(height: 28)),
+              constSliverToBoxAdapter(child: SizedBox(height: 28)),
               SliverToBoxAdapter(
                 child: statsAsync.when(
                   loading: () => const Padding(
