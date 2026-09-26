@@ -8,7 +8,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/money.dart';
 import '../../core/widgets/empty_state.dart';
 import '../../core/widgets/status_badge.dart';
-import '../clients/clients_page.dart';
+import '../dashboard/dashboard_page.dart';
 import 'invoice_editor_page.dart';
 import 'invoice_detail_page.dart';
 
