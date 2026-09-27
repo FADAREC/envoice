@@ -3,9 +3,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
 import 'package:drift/drift.dart' hide Column;
 
 import '../../core/db/database_provider.dart';
@@ -13,6 +10,7 @@ import '../../core/db/app_database.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/security/app_lock.dart';
 import '../../core/backup/backup_service.dart';
+import 'logo_pick.dart';
 import '../dashboard/dashboard_page.dart';
 import '../invoices/invoices_page.dart';
 import '../clients/clients_page.dart';
@@ -409,6 +407,7 @@ class _ProfileCard extends StatelessWidget {
                     width: 48,
                     height: 48,
                     fit: BoxFit.cover,
+                    key: ValueKey(profile!.logoPath),
                   ),
                 )
               else
@@ -474,9 +473,20 @@ class _BusinessProfileEditorPageState
   late final TextEditingController _state;
   late final TextEditingController _tin;
   late final TextEditingController _prefix;
+  late final TextEditingController _currencySymbol;
   String? _logoPath;
+  String _accentColor = '#0A0A0A';
   bool _vatDefault = false;
   bool _saving = false;
+
+  static const _accentChoices = [
+    ('#0A0A0A', 'Black'),
+    ('#1C1C1E', 'Ink'),
+    ('#8B1A1A', 'Deep red'),
+    ('#1A3A5C', 'Navy'),
+    ('#0D5C4C', 'Forest'),
+    ('#5C4A1A', 'Gold'),
+  ];
 
   @override
   void initState() {
@@ -490,7 +500,9 @@ class _BusinessProfileEditorPageState
     _state = TextEditingController(text: p?.state ?? '');
     _tin = TextEditingController(text: p?.tin ?? '');
     _prefix = TextEditingController(text: p?.invoicePrefix ?? 'INV');
+    _currencySymbol = TextEditingController(text: p?.currencySymbol ?? '₦');
     _logoPath = p?.logoPath;
+    _accentColor = p?.accentColor ?? '#0A0A0A';
     _vatDefault = p?.vatEnabledByDefault ?? false;
   }
 
@@ -504,24 +516,13 @@ class _BusinessProfileEditorPageState
     _state.dispose();
     _tin.dispose();
     _prefix.dispose();
+    _currencySymbol.dispose();
     super.dispose();
   }
 
   Future<void> _pickLogo() async {
-    final picker = ImagePicker();
-    final file = await picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1024,
-      maxHeight: 1024,
-      imageQuality: 85,
-    );
-    if (file == null) return;
-
-    final dir = await getApplicationDocumentsDirectory();
-    final dest =
-        File(p.join(dir.path, 'business_logo${p.extension(file.path)}'));
-    await File(file.path).copy(dest.path);
-    setState(() => _logoPath = dest.path);
+    final path = await pickAndStoreLogo(previousPath: _logoPath);
+    if (path != null) setState(() => _logoPath = path);
   }
 
   Future<void> _save() async {
@@ -539,8 +540,12 @@ class _BusinessProfileEditorPageState
         state: Value(_state.text.trim().isEmpty ? null : _state.text.trim()),
         tin: Value(_tin.text.trim().isEmpty ? null : _tin.text.trim()),
         logoPath: Value(_logoPath),
+        accentColor: Value(_accentColor),
         invoicePrefix:
             Value(_prefix.text.trim().isEmpty ? 'INV' : _prefix.text.trim()),
+        currencySymbol: Value(
+          _currencySymbol.text.trim().isEmpty ? '₦' : _currencySymbol.text.trim(),
+        ),
         vatEnabledByDefault: Value(_vatDefault),
         updatedAt: Value(DateTime.now()),
       ));
@@ -569,7 +574,8 @@ class _BusinessProfileEditorPageState
                 ? const SizedBox(
                     width: 16,
                     height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: AppColors.black),
                   )
                 : const Text('Save'),
           ),
@@ -578,7 +584,7 @@ class _BusinessProfileEditorPageState
       body: Form(
         key: _formKey,
         child: ListView(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 48),
           children: [
             Center(
               child: GestureDetector(
@@ -593,6 +599,7 @@ class _BusinessProfileEditorPageState
                           width: 80,
                           height: 80,
                           fit: BoxFit.cover,
+                          key: ValueKey(_logoPath),
                         ),
                       )
                     else
@@ -602,25 +609,25 @@ class _BusinessProfileEditorPageState
                         decoration: BoxDecoration(
                           color: AppColors.fill,
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: AppColors.hairline),
                         ),
                         child: const Icon(Icons.add_a_photo_outlined,
-                            color: AppColors.tertiary),
+                            color: AppColors.secondary),
                       ),
                     const SizedBox(height: 8),
                     Text(
-                      'Company logo',
-                      style: Theme.of(context).textTheme.bodySmall,
+                      _logoPath == null ? 'Add logo' : 'Change logo',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppColors.systemBlue,
+                          ),
                     ),
                   ],
                 ),
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 28),
             TextFormField(
               controller: _name,
-              decoration: const InputDecoration(labelText: 'Company name'),
-              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(labelText: 'Business name'),
               validator: (v) =>
                   (v == null || v.trim().isEmpty) ? 'Required' : null,
             ),
@@ -671,6 +678,47 @@ class _BusinessProfileEditorPageState
                 labelText: 'Invoice number prefix',
                 hintText: 'INV',
               ),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _currencySymbol,
+              decoration: const InputDecoration(
+                labelText: 'Currency symbol',
+                hintText: '₦',
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text('Brand accent (on PDF)',
+                style: Theme.of(context).textTheme.labelMedium),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                for (final (hex, label) in _accentChoices)
+                  GestureDetector(
+                    onTap: () => setState(() => _accentColor = hex),
+                    child: Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: Color(
+                          int.parse(hex.replaceFirst('#', '0xFF')),
+                        ),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: _accentColor == hex
+                              ? AppColors.black
+                              : AppColors.hairline,
+                          width: _accentColor == hex ? 2.5 : 1,
+                        ),
+                      ),
+                      child: _accentColor == hex
+                          ? const Icon(Icons.check, color: Colors.white, size: 18)
+                          : null,
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(height: 8),
             SwitchListTile(
