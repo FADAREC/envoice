@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../db/app_database.dart';
 import 'money.dart';
@@ -48,9 +49,44 @@ String buildInvoiceShareMessage({
       '$due Thank you, $biz.';
 }
 
-/// Writes PDF bytes to a temp file and opens the system share sheet
-/// (WhatsApp, Files, Gmail, etc.).
-/// Throws [StateError] with a clear message on failure so UI can show a snackbar.
+/// Normalize Nigerian / international numbers for wa.me (digits only, with country code).
+String? normalizeWhatsAppPhone(String? raw) {
+  if (raw == null) return null;
+  var digits = raw.replaceAll(RegExp(r'[^0-9+]'), '');
+  if (digits.isEmpty) return null;
+  if (digits.startsWith('+')) digits = digits.substring(1);
+  // Local Nigerian mobile: 0803... → 234803...
+  if (digits.startsWith('0') && digits.length == 11) {
+    digits = '234${digits.substring(1)}';
+  }
+  // Already 234...
+  if (digits.length < 10) return null;
+  return digits;
+}
+
+/// Opens WhatsApp chat with [phone] and pre-filled [text].
+/// Falls back to the generic share sheet if the number is missing or launch fails.
+Future<void> shareTextToWhatsApp({
+  required String text,
+  String? phone,
+}) async {
+  final normalized = normalizeWhatsAppPhone(phone);
+  if (normalized != null) {
+    final uri = Uri.parse(
+      'https://wa.me/$normalized?text=${Uri.encodeComponent(text)}',
+    );
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (ok) return;
+    } catch (_) {
+      // fall through to share sheet
+    }
+  }
+  await shareText(text);
+}
+
+/// Writes PDF bytes to a temp file and opens the system share sheet.
+/// WhatsApp cannot attach files via wa.me — PDF still uses the OS sheet.
 Future<void> shareInvoicePdf({
   required List<int> bytes,
   required String filename,
@@ -71,12 +107,10 @@ Future<void> shareInvoicePdf({
       subject: filename.replaceAll('.pdf', ''),
     );
 
-    // User dismissed the sheet without sharing — not an error.
     if (result.status == ShareResultStatus.dismissed) return;
   } catch (e) {
     throw StateError('Could not share invoice PDF: $e');
   } finally {
-    // Best-effort cleanup; ignore failures.
     try {
       if (file != null && await file.exists()) {
         await file.delete();
