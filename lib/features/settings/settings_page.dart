@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -10,27 +11,279 @@ import 'package:drift/drift.dart' hide Column;
 import '../../core/db/database_provider.dart';
 import '../../core/db/app_database.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/security/app_lock.dart';
+import '../../core/backup/backup_service.dart';
+import '../dashboard/dashboard_page.dart';
+import '../invoices/invoices_page.dart';
+import '../clients/clients_page.dart';
 
 final businessProfileProvider = FutureProvider<BusinessProfile?>((ref) async {
   return ref.watch(databaseProvider).getBusinessProfile();
 });
 
-class SettingsPage extends ConsumerWidget {
+class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends ConsumerState<SettingsPage> {
+  final _lock = AppLock();
+  bool _lockEnabled = false;
+  bool _biometricEnabled = false;
+  bool _biometricAvailable = false;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLockState();
+  }
+
+  Future<void> _loadLockState() async {
+    final enabled = await _lock.isLockEnabled();
+    final bio = await _lock.isBiometricEnabled();
+    final canBio = await _lock.canCheckBiometrics();
+    if (!mounted) return;
+    setState(() {
+      _lockEnabled = enabled;
+      _biometricEnabled = bio;
+      _biometricAvailable = canBio;
+    });
+  }
+
+  Future<void> _setupLock() async {
+    final pinController = TextEditingController();
+    final confirmController = TextEditingController();
+    var useBio = _biometricAvailable;
+
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 24,
+            right: 24,
+            top: 20,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 28,
+          ),
+          child: StatefulBuilder(
+            builder: (ctx, setModal) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('Set app lock', style: Theme.of(ctx).textTheme.headlineMedium),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Anyone who opens this phone will need the PIN before they can see your invoices.',
+                    style: Theme.of(ctx).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 20),
+                  TextField(
+                    controller: pinController,
+                    obscureText: true,
+                    keyboardType: TextInputType.number,
+                    maxLength: 8,
+                    decoration: const InputDecoration(
+                      labelText: 'PIN (4–8 digits)',
+                      counterText: '',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: confirmController,
+                    obscureText: true,
+                    keyboardType: TextInputType.number,
+                    maxLength: 8,
+                    decoration: const InputDecoration(
+                      labelText: 'Confirm PIN',
+                      counterText: '',
+                    ),
+                  ),
+                  if (_biometricAvailable)
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Allow fingerprint / face'),
+                      value: useBio,
+                      activeColor: AppColors.black,
+                      onChanged: (v) => setModal(() => useBio = v),
+                    ),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: () {
+                      if (pinController.text.length < 4) return;
+                      if (pinController.text != confirmController.text) return;
+                      Navigator.pop(ctx, true);
+                    },
+                    child: const Text('Turn on lock'),
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+      },
+    );
+
+    if (ok != true) return;
+    if (pinController.text.length < 4 ||
+        pinController.text != confirmController.text) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('PINs must match and be at least 4 digits')),
+        );
+      }
+      return;
+    }
+
+    try {
+      await _lock.enableLock(pinController.text, biometric: useBio);
+      await _loadLockState();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('App lock is on')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not enable lock: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _disableLock() async {
+    final pinController = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Turn off lock?'),
+        content: TextField(
+          controller: pinController,
+          obscureText: true,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(labelText: 'Enter current PIN'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Turn off'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await _lock.disableLock(pinController.text.trim());
+      await _loadLockState();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('App lock is off')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _exportBackup() async {
+    setState(() => _busy = true);
+    try {
+      final service = BackupService(ref.read(databaseProvider));
+      await service.exportAndShare();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not export: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _importBackup() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Restore backup?'),
+        content: const Text(
+          'This replaces all invoices, clients, and business details on this phone with the backup file. Export first if you are not sure.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              'Restore',
+              style: TextStyle(
+                color: AppColors.danger,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    setState(() => _busy = true);
+    try {
+      final service = BackupService(ref.read(databaseProvider));
+      final count = await service.importFromPicker();
+      ref.invalidate(businessProfileProvider);
+      ref.invalidate(dashboardStatsProvider);
+      ref.invalidate(invoicesProvider);
+      ref.invalidate(clientsProvider);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Restored $count invoices')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not restore: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final profileAsync = ref.watch(businessProfileProvider);
 
     return Scaffold(
+      backgroundColor: AppColors.white,
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 48),
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 48),
           children: [
             Text('Settings', style: Theme.of(context).textTheme.displayLarge),
             const SizedBox(height: 8),
             Text(
-              'Your company brand appears on every invoice.',
+              'Business brand, security, and backup.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 28),
@@ -39,7 +292,8 @@ class SettingsPage extends ConsumerWidget {
                 child: SizedBox(
                   width: 24,
                   height: 24,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.black),
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: AppColors.black),
                 ),
               ),
               error: (e, _) => Text('$e'),
@@ -48,22 +302,76 @@ class SettingsPage extends ConsumerWidget {
                 onEdit: () async {
                   await Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => BusinessProfileEditorPage(profile: profile),
+                      builder: (_) =>
+                          BusinessProfileEditorPage(profile: profile),
                     ),
                   );
                   ref.invalidate(businessProfileProvider);
                 },
               ),
             ),
+            const SizedBox(height: 28),
+            Text('Security', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Text(
+              'Stops anyone with your unlocked phone from opening Envoice and sending invoices as your business.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('App lock (PIN)'),
+              subtitle: Text(_lockEnabled ? 'On' : 'Off'),
+              value: _lockEnabled,
+              activeColor: AppColors.black,
+              onChanged: (v) async {
+                HapticFeedback.selectionClick();
+                if (v) {
+                  await _setupLock();
+                } else {
+                  await _disableLock();
+                }
+              },
+            ),
+            if (_lockEnabled && _biometricAvailable)
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Fingerprint / face unlock'),
+                value: _biometricEnabled,
+                activeColor: AppColors.black,
+                onChanged: (v) async {
+                  await _lock.setBiometric(v);
+                  await _loadLockState();
+                },
+              ),
+            const SizedBox(height: 28),
+            Text('Backup', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Text(
+              'Clearing app data or losing this phone wipes local history. Export a backup to Drive, Files, or WhatsApp to yourself regularly.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 14),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _exportBackup,
+              icon: const Icon(Icons.upload_outlined, size: 18),
+              label: const Text('Export backup'),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _importBackup,
+              icon: const Icon(Icons.download_outlined, size: 18),
+              label: const Text('Restore from backup'),
+            ),
             const SizedBox(height: 32),
             Text(
               'Envoice',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: AppColors.faint,
+                    color: AppColors.tertiary,
                   ),
             ),
             Text(
-              'Offline-first invoicing. Data stays on this device.',
+              'Offline-first. Data lives on this device until you export.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
@@ -84,7 +392,7 @@ class _ProfileCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        border: Border.all(color: AppColors.line),
+        border: Border.all(color: AppColors.hairline),
         borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
@@ -92,7 +400,8 @@ class _ProfileCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              if (profile?.logoPath != null && File(profile!.logoPath!).existsSync())
+              if (profile?.logoPath != null &&
+                  File(profile!.logoPath!).existsSync())
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: Image.file(
@@ -107,10 +416,10 @@ class _ProfileCard extends StatelessWidget {
                   width: 48,
                   height: 48,
                   decoration: BoxDecoration(
-                    color: AppColors.surface,
+                    color: AppColors.fill,
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Icon(Icons.business, color: AppColors.faint),
+                  child: const Icon(Icons.business, color: AppColors.tertiary),
                 ),
               const SizedBox(width: 14),
               Expanded(
@@ -122,7 +431,8 @@ class _ProfileCard extends StatelessWidget {
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     if (profile?.email != null)
-                      Text(profile!.email!, style: Theme.of(context).textTheme.bodySmall),
+                      Text(profile!.email!,
+                          style: Theme.of(context).textTheme.bodySmall),
                   ],
                 ),
               ),
@@ -133,7 +443,8 @@ class _ProfileCard extends StatelessWidget {
             width: double.infinity,
             child: OutlinedButton(
               onPressed: onEdit,
-              child: Text(profile == null ? 'Add business details' : 'Edit business profile'),
+              child: Text(
+                  profile == null ? 'Add business details' : 'Edit business profile'),
             ),
           ),
         ],
@@ -207,7 +518,8 @@ class _BusinessProfileEditorPageState
     if (file == null) return;
 
     final dir = await getApplicationDocumentsDirectory();
-    final dest = File(p.join(dir.path, 'business_logo${p.extension(file.path)}'));
+    final dest =
+        File(p.join(dir.path, 'business_logo${p.extension(file.path)}'));
     await File(file.path).copy(dest.path);
     setState(() => _logoPath = dest.path);
   }
@@ -215,28 +527,39 @@ class _BusinessProfileEditorPageState
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
-
-    final db = ref.read(databaseProvider);
-    await db.upsertBusinessProfile(BusinessProfilesCompanion(
-      companyName: Value(_name.text.trim()),
-      email: Value(_email.text.trim().isEmpty ? null : _email.text.trim()),
-      phone: Value(_phone.text.trim().isEmpty ? null : _phone.text.trim()),
-      addressLine1: Value(_address.text.trim().isEmpty ? null : _address.text.trim()),
-      city: Value(_city.text.trim().isEmpty ? null : _city.text.trim()),
-      state: Value(_state.text.trim().isEmpty ? null : _state.text.trim()),
-      tin: Value(_tin.text.trim().isEmpty ? null : _tin.text.trim()),
-      logoPath: Value(_logoPath),
-      invoicePrefix: Value(_prefix.text.trim().isEmpty ? 'INV' : _prefix.text.trim()),
-      vatEnabledByDefault: Value(_vatDefault),
-      updatedAt: Value(DateTime.now()),
-    ));
-
-    if (mounted) Navigator.of(context).pop();
+    try {
+      final db = ref.read(databaseProvider);
+      await db.upsertBusinessProfile(BusinessProfilesCompanion(
+        companyName: Value(_name.text.trim()),
+        email: Value(_email.text.trim().isEmpty ? null : _email.text.trim()),
+        phone: Value(_phone.text.trim().isEmpty ? null : _phone.text.trim()),
+        addressLine1:
+            Value(_address.text.trim().isEmpty ? null : _address.text.trim()),
+        city: Value(_city.text.trim().isEmpty ? null : _city.text.trim()),
+        state: Value(_state.text.trim().isEmpty ? null : _state.text.trim()),
+        tin: Value(_tin.text.trim().isEmpty ? null : _tin.text.trim()),
+        logoPath: Value(_logoPath),
+        invoicePrefix:
+            Value(_prefix.text.trim().isEmpty ? 'INV' : _prefix.text.trim()),
+        vatEnabledByDefault: Value(_vatDefault),
+        updatedAt: Value(DateTime.now()),
+      ));
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not save: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppColors.white,
       appBar: AppBar(
         title: const Text('Business profile'),
         actions: [
@@ -277,11 +600,12 @@ class _BusinessProfileEditorPageState
                         width: 80,
                         height: 80,
                         decoration: BoxDecoration(
-                          color: AppColors.surface,
+                          color: AppColors.fill,
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: AppColors.line),
+                          border: Border.all(color: AppColors.hairline),
                         ),
-                        child: const Icon(Icons.add_a_photo_outlined, color: AppColors.faint),
+                        child: const Icon(Icons.add_a_photo_outlined,
+                            color: AppColors.tertiary),
                       ),
                     const SizedBox(height: 8),
                     Text(
