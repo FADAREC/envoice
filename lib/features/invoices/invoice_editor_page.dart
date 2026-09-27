@@ -8,6 +8,8 @@ import '../../core/db/app_database.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/money.dart';
 import '../clients/clients_page.dart';
+import '../dashboard/dashboard_page.dart';
+import 'invoices_page.dart';
 
 class _LineItem {
   final String key;
@@ -128,6 +130,7 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
         _clientId = list.first.id;
       }
     });
+    ref.invalidate(clientsProvider);
   }
 
   double get _subtotal => _items.fold(0.0, (s, i) => s + i.amount);
@@ -182,11 +185,10 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
       }
 
       if (_existingId == null) {
-        // New invoice: number allocation + insert are atomic
         await db.createInvoiceWithNumber(
           invoiceWithoutNumber: InvoicesCompanion(
             id: Value(id),
-            number: const Value(''), // filled inside transaction
+            number: const Value(''),
             clientId: Value(_clientId!),
             status: Value(status),
             issueDate: Value(_issueDate),
@@ -225,7 +227,13 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
         );
       }
 
-      if (mounted) Navigator.of(context).pop();
+      // Root cause: FutureProviders cache until invalidated.
+      // Invalidate at the write site so every tab sees the new invoice.
+      if (mounted) {
+        ref.invalidate(invoicesProvider);
+        ref.invalidate(dashboardStatsProvider);
+        Navigator.of(context).pop();
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
