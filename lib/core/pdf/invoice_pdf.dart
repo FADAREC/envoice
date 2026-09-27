@@ -7,9 +7,18 @@ import 'package:pdf/widgets.dart' as pw;
 import '../db/app_database.dart';
 import '../utils/money.dart';
 
+PdfColor _parseAccent(String? hex) {
+  if (hex == null || hex.isEmpty) return PdfColor.fromInt(0xFF111111);
+  var h = hex.trim();
+  if (h.startsWith('#')) h = h.substring(1);
+  if (h.length == 6) h = 'FF$h';
+  final value = int.tryParse(h, radix: 16);
+  if (value == null) return PdfColor.fromInt(0xFF111111);
+  return PdfColor.fromInt(value);
+}
+
 /// Client-facing invoice PDF.
-/// Goal: look like a document a high-end service brand would send,
-/// not a generic template. Hierarchy is amount → parties → lines → totals.
+/// Amount leads. Accent color is used once: the amount figure and a thin rule.
 Future<Uint8List> buildInvoicePdf({
   required Invoice invoice,
   required Client client,
@@ -33,6 +42,7 @@ Future<Uint8List> buildInvoicePdf({
   final balance = invoice.total - invoice.amountPaid;
   final showBalance = balance > 0.001;
   final status = AppDatabase.effectiveStatus(invoice);
+  final accent = _parseAccent(business?.accentColor);
 
   const ink = PdfColor.fromInt(0xFF111111);
   const muted = PdfColor.fromInt(0xFF6B6B6B);
@@ -62,7 +72,6 @@ Future<Uint8List> buildInvoicePdf({
         ),
       ),
       build: (context) => [
-        // Brand + invoice label
         pw.Row(
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
@@ -130,9 +139,11 @@ Future<Uint8List> buildInvoicePdf({
           ],
         ),
 
-        pw.SizedBox(height: 36),
+        // Single brand accent rule under header
+        pw.SizedBox(height: 16),
+        pw.Container(height: 2, color: accent),
+        pw.SizedBox(height: 28),
 
-        // Amount due — clean, no grey box
         pw.Text(
           showBalance ? 'Amount due' : 'Total',
           style: const pw.TextStyle(fontSize: 10, color: muted),
@@ -143,7 +154,7 @@ Future<Uint8List> buildInvoicePdf({
           style: pw.TextStyle(
             fontSize: 28,
             fontWeight: pw.FontWeight.bold,
-            color: ink,
+            color: accent,
             letterSpacing: -0.4,
           ),
         ),
@@ -163,7 +174,6 @@ Future<Uint8List> buildInvoicePdf({
         pw.Container(height: 0.5, color: line),
         pw.SizedBox(height: 24),
 
-        // From / Bill to / Details
         pw.Row(
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
@@ -209,7 +219,6 @@ Future<Uint8List> buildInvoicePdf({
 
         pw.SizedBox(height: 32),
 
-        // Line items header
         pw.Container(
           padding: const pw.EdgeInsets.only(bottom: 8),
           decoration: const pw.BoxDecoration(
@@ -217,22 +226,14 @@ Future<Uint8List> buildInvoicePdf({
           ),
           child: pw.Row(
             children: [
+              pw.Expanded(flex: 5, child: _colHead('Description')),
               pw.Expanded(
-                flex: 5,
-                child: _colHead('Description'),
-              ),
+                  flex: 1, child: _colHead('Qty', align: pw.TextAlign.right)),
               pw.Expanded(
-                flex: 1,
-                child: _colHead('Qty', align: pw.TextAlign.right),
-              ),
+                  flex: 2, child: _colHead('Rate', align: pw.TextAlign.right)),
               pw.Expanded(
-                flex: 2,
-                child: _colHead('Rate', align: pw.TextAlign.right),
-              ),
-              pw.Expanded(
-                flex: 2,
-                child: _colHead('Amount', align: pw.TextAlign.right),
-              ),
+                  flex: 2,
+                  child: _colHead('Amount', align: pw.TextAlign.right)),
             ],
           ),
         ),
@@ -287,14 +288,14 @@ Future<Uint8List> buildInvoicePdf({
 
         pw.SizedBox(height: 20),
 
-        // Totals
         pw.Align(
           alignment: pw.Alignment.centerRight,
           child: pw.SizedBox(
             width: 220,
             child: pw.Column(
               children: [
-                _totalRow('Subtotal', formatMoney(invoice.subtotal, symbol: symbol)),
+                _totalRow(
+                    'Subtotal', formatMoney(invoice.subtotal, symbol: symbol)),
                 if (invoice.discountAmount > 0)
                   _totalRow(
                     'Discount',
@@ -330,6 +331,7 @@ Future<Uint8List> buildInvoicePdf({
                     'Balance due',
                     formatMoney(balance, symbol: symbol),
                     bold: true,
+                    accent: accent,
                   ),
               ],
             ),
@@ -461,8 +463,10 @@ pw.Widget _totalRow(
   String value, {
   bool bold = false,
   bool large = false,
+  PdfColor? accent,
 }) {
   const ink = PdfColor.fromInt(0xFF111111);
+  final color = accent ?? ink;
   return pw.Padding(
     padding: const pw.EdgeInsets.symmetric(vertical: 3),
     child: pw.Row(
@@ -481,7 +485,7 @@ pw.Widget _totalRow(
           style: pw.TextStyle(
             fontSize: large ? 12 : 10,
             fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
-            color: ink,
+            color: color,
           ),
         ),
       ],
