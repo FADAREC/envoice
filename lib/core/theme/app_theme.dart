@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 
-/// Apple-grade restraint: near-black ink, pure white, hairline rules, no chrome noise.
+/// Apple-grade restraint: near-black ink, pure white, hairline rules.
+/// Uses the platform default sans (Roboto on Android) so first paint never
+/// waits on a network font download — critical for offline-first.
 class AppColors {
   static const black = Color(0xFF000000);
   static const ink = Color(0xFF1C1C1E);
@@ -19,7 +20,6 @@ class AppColors {
   static const warning = Color(0xFFFF9500);
   static const danger = Color(0xFFFF3B30);
 
-  // legacy aliases used across screens
   static const muted = secondary;
   static const faint = tertiary;
   static const line = hairline;
@@ -56,68 +56,68 @@ class AppTheme {
       ),
     );
 
-    final textTheme = GoogleFonts.interTextTheme(base.textTheme).copyWith(
-      displayLarge: GoogleFonts.inter(
+    final textTheme = base.textTheme.copyWith(
+      displayLarge: const TextStyle(
         fontSize: 34,
         fontWeight: FontWeight.w700,
         letterSpacing: 0.37,
         height: 1.15,
         color: AppColors.ink,
       ),
-      displayMedium: GoogleFonts.inter(
+      displayMedium: const TextStyle(
         fontSize: 28,
         fontWeight: FontWeight.w700,
         letterSpacing: 0.36,
         height: 1.2,
         color: AppColors.ink,
       ),
-      headlineMedium: GoogleFonts.inter(
+      headlineMedium: const TextStyle(
         fontSize: 22,
         fontWeight: FontWeight.w600,
         letterSpacing: 0.35,
         height: 1.25,
         color: AppColors.ink,
       ),
-      titleLarge: GoogleFonts.inter(
+      titleLarge: const TextStyle(
         fontSize: 17,
         fontWeight: FontWeight.w600,
         letterSpacing: -0.41,
         height: 1.3,
         color: AppColors.ink,
       ),
-      titleMedium: GoogleFonts.inter(
+      titleMedium: const TextStyle(
         fontSize: 16,
         fontWeight: FontWeight.w600,
         letterSpacing: -0.32,
         color: AppColors.ink,
       ),
-      bodyLarge: GoogleFonts.inter(
+      bodyLarge: const TextStyle(
         fontSize: 17,
         fontWeight: FontWeight.w400,
         letterSpacing: -0.41,
         height: 1.35,
         color: AppColors.ink,
       ),
-      bodyMedium: GoogleFonts.inter(
+      bodyMedium: const TextStyle(
         fontSize: 15,
         fontWeight: FontWeight.w400,
         letterSpacing: -0.24,
         height: 1.35,
         color: AppColors.ink,
       ),
-      bodySmall: GoogleFonts.inter(
+      bodySmall: const TextStyle(
         fontSize: 13,
         fontWeight: FontWeight.w400,
         letterSpacing: -0.08,
         color: AppColors.secondary,
       ),
-      labelLarge: GoogleFonts.inter(
+      labelLarge: const TextStyle(
         fontSize: 17,
         fontWeight: FontWeight.w600,
         letterSpacing: -0.41,
         color: AppColors.ink,
       ),
-      labelMedium: GoogleFonts.inter(
+      labelMedium: const TextStyle(
         fontSize: 12,
         fontWeight: FontWeight.w500,
         letterSpacing: 0,
