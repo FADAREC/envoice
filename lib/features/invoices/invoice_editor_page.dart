@@ -173,13 +173,16 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
       for (var i = 0; i < _items.length; i++) {
         final item = _items[i];
         if (item.description.text.trim().isEmpty) continue;
+        // Guard against nonsense quantities/prices
+        final qty = item.quantityValue < 0 ? 0.0 : item.quantityValue;
+        final price = item.unitPriceValue < 0 ? 0.0 : item.unitPriceValue;
         itemCompanions.add(InvoiceItemsCompanion(
           id: Value(_uuid.v4()),
           invoiceId: Value(id),
           description: Value(item.description.text.trim()),
-          quantity: Value(item.quantityValue),
-          unitPrice: Value(item.unitPriceValue),
-          amount: Value(item.amount),
+          quantity: Value(qty),
+          unitPrice: Value(price),
+          amount: Value(qty * price),
           sortOrder: Value(i),
         ));
       }
@@ -227,8 +230,6 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
         );
       }
 
-      // Root cause: FutureProviders cache until invalidated.
-      // Invalidate at the write site so every tab sees the new invoice.
       if (mounted) {
         ref.invalidate(invoicesProvider);
         ref.invalidate(dashboardStatsProvider);
@@ -432,15 +433,74 @@ class _InvoiceEditorPageState extends ConsumerState<InvoiceEditorPage> {
   }
 
   Widget _buildItemRow(_LineItem item) {
+    final db = ref.read(databaseProvider);
     return Padding(
       key: ValueKey(item.key),
       padding: const EdgeInsets.only(bottom: 16),
       child: Column(
         children: [
-          TextField(
-            controller: item.description,
-            decoration: const InputDecoration(hintText: 'Description'),
-            onChanged: (_) => setState(() {}),
+          Autocomplete<SavedItem>(
+            displayStringForOption: (s) => s.description,
+            optionsBuilder: (TextEditingValue tev) async {
+              return db.searchSavedItems(tev.text);
+            },
+            onSelected: (SavedItem s) {
+              item.description.text = s.description;
+              item.unitPrice.text = s.unitPrice == 0
+                  ? ''
+                  : s.unitPrice.toStringAsFixed(
+                      s.unitPrice == s.unitPrice.roundToDouble() ? 0 : 2,
+                    );
+              setState(() {});
+            },
+            fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+              // Keep row controller in sync with autocomplete field
+              if (controller.text != item.description.text) {
+                controller.text = item.description.text;
+                controller.selection = TextSelection.collapsed(
+                  offset: controller.text.length,
+                );
+              }
+              return TextField(
+                controller: controller,
+                focusNode: focusNode,
+                decoration: const InputDecoration(hintText: 'Description'),
+                onChanged: (v) {
+                  item.description.text = v;
+                  setState(() {});
+                },
+              );
+            },
+            optionsViewBuilder: (context, onSelected, options) {
+              return Align(
+                alignment: Alignment.topLeft,
+                child: Material(
+                  elevation: 4,
+                  borderRadius: BorderRadius.circular(12),
+                  color: AppColors.white,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 200, maxWidth: 360),
+                    child: ListView.builder(
+                      padding: EdgeInsets.zero,
+                      shrinkWrap: true,
+                      itemCount: options.length,
+                      itemBuilder: (context, index) {
+                        final s = options.elementAt(index);
+                        return ListTile(
+                          dense: true,
+                          title: Text(s.description),
+                          subtitle: Text(
+                            formatMoney(s.unitPrice, symbol: _sym),
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          onTap: () => onSelected(s),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              );
+            },
           ),
           const SizedBox(height: 8),
           Row(
