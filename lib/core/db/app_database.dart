@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:uuid/uuid.dart';
 
 import 'tables.dart';
 
@@ -15,6 +16,7 @@ part 'app_database.g.dart';
   Invoices,
   InvoiceItems,
   Payments,
+  SavedItems,
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
@@ -22,17 +24,17 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(QueryExecutor e) : super(e);
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
         onCreate: (m) async {
           await m.createAll();
         },
-        // Future schema bumps go here. Never wipe user data.
         onUpgrade: (m, from, to) async {
-          // Example when bumping to 2:
-          // if (from < 2) { await m.addColumn(payments, payments.foo); }
+          if (from < 2) {
+            await m.createTable(savedItems);
+          }
         },
         beforeOpen: (details) async {
           await customStatement('PRAGMA foreign_keys = ON');
@@ -82,7 +84,6 @@ class AppDatabase extends _$AppDatabase {
     return into(clients).insertOnConflictUpdate(data);
   }
 
-  /// Returns false if client still has invoices (caller should show message).
   Future<bool> deleteClientIfUnused(String id) async {
     final linked = await (select(invoices)..where((t) => t.clientId.equals(id)))
         .get();
@@ -96,6 +97,56 @@ class AppDatabase extends _$AppDatabase {
           ..where((t) => t.clientId.equals(clientId)))
         .get();
     return rows.length;
+  }
+
+  // ── Saved items catalog ───────────────────────────────────────
+
+  Future<List<SavedItem>> searchSavedItems(String query) {
+    final q = query.trim().toLowerCase();
+    if (q.isEmpty) {
+      return (select(savedItems)
+            ..orderBy([
+              (t) => OrderingTerm.desc(t.timesUsed),
+              (t) => OrderingTerm.desc(t.updatedAt),
+            ])
+            ..limit(20))
+          .get();
+    }
+    return (select(savedItems)
+          ..where((t) => t.description.lower().like('%$q%'))
+          ..orderBy([
+            (t) => OrderingTerm.desc(t.timesUsed),
+            (t) => OrderingTerm.desc(t.updatedAt),
+          ])
+          ..limit(12))
+        .get();
+  }
+
+  /// Upsert by case-insensitive description; bump timesUsed when re-used.
+  Future<void> rememberSavedItem({
+    required String description,
+    required double unitPrice,
+  }) async {
+    final desc = description.trim();
+    if (desc.isEmpty) return;
+    final existing = await (select(savedItems)
+          ..where((t) => t.description.lower().equals(desc.toLowerCase())))
+        .getSingleOrNull();
+    if (existing != null) {
+      await (update(savedItems)..where((t) => t.id.equals(existing.id))).write(
+        SavedItemsCompanion(
+          unitPrice: Value(unitPrice),
+          timesUsed: Value(existing.timesUsed + 1),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+    } else {
+      await into(savedItems).insert(SavedItemsCompanion.insert(
+        id: const Uuid().v4(),
+        description: desc,
+        unitPrice: Value(unitPrice),
+      ));
+    }
   }
 
   // ── Invoices ──────────────────────────────────────────────────
@@ -124,8 +175,6 @@ class AppDatabase extends _$AppDatabase {
         .get();
   }
 
-  /// Allocate sequential number and insert invoice + items in ONE transaction.
-  /// Prevents burned numbers when the process dies mid-save.
   Future<String> createInvoiceWithNumber({
     required InvoicesCompanion invoiceWithoutNumber,
     required List<InvoiceItemsCompanion> items,
@@ -157,6 +206,10 @@ class AppDatabase extends _$AppDatabase {
         await into(invoiceItems).insert(
           item.copyWith(invoiceId: Value(invId)),
         );
+        await rememberSavedItem(
+          description: item.description.value,
+          unitPrice: item.unitPrice.value,
+        );
       }
       return number;
     });
@@ -172,6 +225,10 @@ class AppDatabase extends _$AppDatabase {
       await (delete(invoiceItems)..where((t) => t.invoiceId.equals(invId))).go();
       for (final item in items) {
         await into(invoiceItems).insert(item);
+        await rememberSavedItem(
+          description: item.description.value,
+          unitPrice: item.unitPrice.value,
+        );
       }
     });
   }
@@ -193,8 +250,6 @@ class AppDatabase extends _$AppDatabase {
     });
   }
 
-  /// Single source of truth for display status.
-  /// Stored column never holds 'overdue'; overdue is always derived.
   static String effectiveStatus(Invoice inv, {DateTime? now}) {
     final n = now ?? DateTime.now();
     final remaining = inv.total - inv.amountPaid;

@@ -107,3 +107,15 @@ class Payments extends Table {
   @override
   Set<Column> get primaryKey => {id};
 }
+
+/// Line-item catalog built from real usage — no separate manage screen required.
+class SavedItems extends Table {
+  TextColumn get id => text()();
+  TextColumn get description => text()();
+  RealColumn get unitPrice => real().withDefault(const Constant(0))();
+  IntColumn get timesUsed => integer().withDefault(const Constant(1))();
+  DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
