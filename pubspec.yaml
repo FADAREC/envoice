@@ -22,9 +22,8 @@ dependencies:
   # PDF + share
   pdf: ^3.11.1
   printing: ^5.13.4
-  # 10.1.4 applies kotlin-android (breaks AGP 9 built-in Kotlin).
-  # Stay on a line that works with AGP 8.11.1 + KGP 2.2.20.
   share_plus: ^10.1.4
+  url_launcher: ^6.3.1
 
   # Security + durable backup
   shared_preferences: ^2.3.3
@@ -33,7 +32,6 @@ dependencies:
   file_picker: ^8.1.6
 
   # UI / utilities
-  google_fonts: ^6.2.1
   intl: ^0.19.0
   uuid: ^4.5.1
   image_picker: ^1.1.2
