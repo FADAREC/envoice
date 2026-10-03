@@ -119,12 +119,25 @@ class SavedItems extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-/// Laundry price catalog: price is keyed by item name + service type.
-/// serviceType: wash_fold | dry_clean
+/// Service types staff can offer (Wash & Fold, Dry Clean, Express, Iron only, ...).
+/// Archive via active=false; never delete so order history stays valid.
+class Services extends Table {
+  TextColumn get id => text()();
+  TextColumn get name => text().withLength(min: 1, max: 80)();
+  BoolColumn get active => boolean().withDefault(const Constant(true))();
+  IntColumn get sortOrder => integer().withDefault(const Constant(0))();
+  DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+/// Price catalog: one row per (item name, service).
+/// serviceId links to Services. Snapshot name+price on OrderItems at order time.
 class CatalogItems extends Table {
   TextColumn get id => text()();
   TextColumn get name => text().withLength(min: 1, max: 120)();
-  TextColumn get serviceType => text()();
+  TextColumn get serviceId => text().references(Services, #id)();
   RealColumn get unitPrice => real().withDefault(const Constant(0))();
   BoolColumn get active => boolean().withDefault(const Constant(true))();
   IntColumn get sortOrder => integer().withDefault(const Constant(0))();
@@ -161,12 +174,13 @@ class Orders extends Table {
   Set<Column> get primaryKey => {id};
 }
 
+/// Line snapshot: description + serviceName + unitPrice frozen at order time.
 class OrderItems extends Table {
   TextColumn get id => text()();
   TextColumn get orderId => text().references(Orders, #id)();
   TextColumn get catalogItemId => text().nullable()();
   TextColumn get description => text()();
-  TextColumn get serviceType => text()();
+  TextColumn get serviceName => text()();
   RealColumn get quantity => real().withDefault(const Constant(1))();
   RealColumn get unitPrice => real().withDefault(const Constant(0))();
   RealColumn get amount => real().withDefault(const Constant(0))();
