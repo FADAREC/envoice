@@ -85,8 +85,8 @@ class Invoices extends Table {
 class InvoiceItems extends Table {
   TextColumn get id => text()();
   TextColumn get invoiceId => text().references(Invoices, #id)();
-  RealColumn get quantity => real().withDefault(const Constant(1))();
   TextColumn get description => text()();
+  RealColumn get quantity => real().withDefault(const Constant(1))();
   RealColumn get unitPrice => real().withDefault(const Constant(0))();
   RealColumn get amount => real().withDefault(const Constant(0))();
   IntColumn get sortOrder => integer().withDefault(const Constant(0))();
