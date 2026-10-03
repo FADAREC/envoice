@@ -24,7 +24,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(QueryExecutor e) : super(e);
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -35,13 +35,19 @@ class AppDatabase extends _$AppDatabase {
           if (from < 2) {
             await m.createTable(savedItems);
           }
+          if (from < 3) {
+            await m.addColumn(businessProfiles, businessProfiles.bankName);
+            await m.addColumn(businessProfiles, businessProfiles.bankAccountName);
+            await m.addColumn(
+                businessProfiles, businessProfiles.bankAccountNumber);
+          }
         },
         beforeOpen: (details) async {
           await customStatement('PRAGMA foreign_keys = ON');
         },
       );
 
-  // ── Business profile ──────────────────────────────────────────
+  // -- Business profile --
 
   Future<BusinessProfile?> getBusinessProfile() {
     return (select(businessProfiles)..limit(1)).getSingleOrNull();
@@ -56,7 +62,7 @@ class AppDatabase extends _$AppDatabase {
         .write(data.copyWith(updatedAt: Value(DateTime.now())));
   }
 
-  // ── Clients ───────────────────────────────────────────────────
+  // -- Clients --
 
   Future<List<Client>> getAllClients() {
     return (select(clients)
@@ -99,7 +105,7 @@ class AppDatabase extends _$AppDatabase {
     return rows.length;
   }
 
-  // ── Saved items catalog ───────────────────────────────────────
+  // -- Saved items catalog --
 
   Future<List<SavedItem>> searchSavedItems(String query) {
     final q = query.trim().toLowerCase();
@@ -149,7 +155,7 @@ class AppDatabase extends _$AppDatabase {
     }
   }
 
-  // ── Invoices ──────────────────────────────────────────────────
+  // -- Invoices --
 
   Future<List<Invoice>> getAllInvoices() {
     return (select(invoices)
@@ -264,7 +270,7 @@ class AppDatabase extends _$AppDatabase {
     return inv.status;
   }
 
-  // ── Payments ──────────────────────────────────────────────────
+  // -- Payments --
 
   Future<List<Payment>> getPaymentsForInvoice(String invoiceId) {
     return (select(payments)
@@ -311,7 +317,7 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
-  // ── Dashboard ─────────────────────────────────────────────────
+  // -- Dashboard --
 
   Future<DashboardStats> getDashboardStats() async {
     final all = await getAllInvoices();
