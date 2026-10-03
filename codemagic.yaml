@@ -16,6 +16,15 @@ workflows:
             flutter create . --project-name envoice --org com.envoice --platforms=android
           fi
 
+      - name: Fetch PDF fonts (Noto Sans with naira glyph)
+        script: |
+          set -e
+          mkdir -p assets/fonts
+          curl -fsSL -o assets/fonts/NotoSans-Regular.ttf \
+            "https://github.com/google/fonts/raw/main/ofl/notosans/NotoSans%5Bwdth%2Cwght%5D.ttf"
+          cp assets/fonts/NotoSans-Regular.ttf assets/fonts/NotoSans-Bold.ttf
+          ls -la assets/fonts/
+
       - name: Get dependencies
         script: |
           set -e
