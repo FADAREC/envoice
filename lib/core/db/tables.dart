@@ -28,6 +28,12 @@ class BusinessProfiles extends Table {
       boolean().withDefault(const Constant(false))();
   TextColumn get currencyCode => text().withDefault(const Constant('NGN'))();
   TextColumn get currencySymbol => text().withDefault(const Constant('₦'))();
+
+  // Payment instructions printed on invoices
+  TextColumn get bankName => text().nullable()();
+  TextColumn get bankAccountName => text().nullable()();
+  TextColumn get bankAccountNumber => text().nullable()();
+
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
 }
@@ -79,8 +85,8 @@ class Invoices extends Table {
 class InvoiceItems extends Table {
   TextColumn get id => text()();
   TextColumn get invoiceId => text().references(Invoices, #id)();
-  TextColumn get description => text()();
   RealColumn get quantity => real().withDefault(const Constant(1))();
+  TextColumn get description => text()();
   RealColumn get unitPrice => real().withDefault(const Constant(0))();
   RealColumn get amount => real().withDefault(const Constant(0))();
   IntColumn get sortOrder => integer().withDefault(const Constant(0))();
@@ -108,7 +114,7 @@ class Payments extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-/// Line-item catalog built from real usage — no separate manage screen required.
+/// Line-item catalog built from real usage - no separate manage screen required.
 class SavedItems extends Table {
   TextColumn get id => text()();
   TextColumn get description => text()();
