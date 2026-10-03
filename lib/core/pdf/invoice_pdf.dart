@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
@@ -17,8 +18,55 @@ PdfColor _parseAccent(String? hex) {
   return PdfColor.fromInt(value);
 }
 
+/// Client-facing status (never internal jargon like SENT).
+String clientFacingStatus(Invoice invoice) {
+  final status = AppDatabase.effectiveStatus(invoice);
+  final balance = invoice.total - invoice.amountPaid;
+  final paid = balance <= 0.001;
+
+  if (status == 'voided') return 'Voided';
+  if (status == 'draft') return 'Draft';
+  if (paid || status == 'paid') return 'Paid';
+
+  if (status == 'partial') {
+    if (invoice.dueDate != null) {
+      final days = invoice.dueDate!.difference(DateTime.now()).inDays;
+      if (days < 0) {
+        return 'Partially paid · ${-days} day${-days == 1 ? '' : 's'} overdue';
+      }
+      if (days == 0) return 'Partially paid · due today';
+      return 'Partially paid · due in $days day${days == 1 ? '' : 's'}';
+    }
+    return 'Partially paid';
+  }
+
+  if (status == 'overdue' && invoice.dueDate != null) {
+    final days = DateTime.now().difference(invoice.dueDate!).inDays;
+    return 'Unpaid · $days day${days == 1 ? '' : 's'} overdue';
+  }
+
+  if (invoice.dueDate != null) {
+    final days = invoice.dueDate!.difference(DateTime.now()).inDays;
+    if (days < 0) {
+      return 'Unpaid · ${-days} day${-days == 1 ? '' : 's'} overdue';
+    }
+    if (days == 0) return 'Unpaid · due today';
+    return 'Unpaid · due in $days day${days == 1 ? '' : 's'}';
+  }
+  return 'Unpaid';
+}
+
+/// Unified date: 6 Oct 2026 (avoids day/month confusion).
+String fmtDate(DateTime d) {
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  return '${d.day} ${months[d.month - 1]} ${d.year}';
+}
+
 /// Client-facing invoice PDF.
-/// Amount leads. Accent color is used once: the amount figure and a thin rule.
+/// Bundled Noto Sans so naira and Nigerian diacritics render (Helvetica has neither).
 Future<Uint8List> buildInvoicePdf({
   required Invoice invoice,
   required Client client,
@@ -26,7 +74,15 @@ Future<Uint8List> buildInvoicePdf({
   required List<InvoiceItem> items,
   required List<Payment> payments,
 }) async {
-  final doc = pw.Document();
+  final regularData =
+      await rootBundle.load('assets/fonts/NotoSans-Regular.ttf');
+  final boldData = await rootBundle.load('assets/fonts/NotoSans-Bold.ttf');
+  final regular = pw.Font.ttf(regularData);
+  final bold = pw.Font.ttf(boldData);
+
+  final doc = pw.Document(
+    theme: pw.ThemeData.withFont(base: regular, bold: bold),
+  );
 
   pw.ImageProvider? logo;
   if (business?.logoPath != null) {
@@ -40,13 +96,18 @@ Future<Uint8List> buildInvoicePdf({
   final companyName = business?.companyName ?? 'Your Business';
   final symbol = invoice.currencySymbol;
   final balance = invoice.total - invoice.amountPaid;
-  final showBalance = balance > 0.001;
-  final status = AppDatabase.effectiveStatus(invoice);
+  final fullyPaid = balance <= 0.001;
+  final hasPartial = invoice.amountPaid > 0.001 && !fullyPaid;
   final accent = _parseAccent(business?.accentColor);
 
   const ink = PdfColor.fromInt(0xFF111111);
-  const muted = PdfColor.fromInt(0xFF6B6B6B);
+  const muted = PdfColor.fromInt(0xFF4A4A4A);
   const line = PdfColor.fromInt(0xFFE8E8E8);
+
+  final hasBank = (business?.bankName != null &&
+          business!.bankName!.trim().isNotEmpty) ||
+      (business?.bankAccountNumber != null &&
+          business!.bankAccountNumber!.trim().isNotEmpty);
 
   doc.addPage(
     pw.MultiPage(
@@ -81,8 +142,8 @@ Future<Uint8List> buildInvoicePdf({
               children: [
                 if (logo != null) ...[
                   pw.Container(
-                    height: 36,
-                    width: 36,
+                    height: 40,
+                    width: 40,
                     child: pw.Image(logo, fit: pw.BoxFit.contain),
                   ),
                   pw.SizedBox(width: 12),
@@ -103,10 +164,10 @@ Future<Uint8List> buildInvoicePdf({
                         padding: const pw.EdgeInsets.only(top: 3),
                         child: pw.Text(
                           [
-                            if (business?.email != null) business!.email!,
                             if (business?.phone != null) business!.phone!,
+                            if (business?.email != null) business!.email!,
                           ].join('  ·  '),
-                          style: const pw.TextStyle(fontSize: 9, color: muted),
+                          style: const pw.TextStyle(fontSize: 10, color: muted),
                         ),
                       ),
                   ],
@@ -139,18 +200,17 @@ Future<Uint8List> buildInvoicePdf({
           ],
         ),
 
-        // Single brand accent rule under header
         pw.SizedBox(height: 16),
-        pw.Container(height: 2, color: accent),
+        pw.Container(height: 2.5, color: accent),
         pw.SizedBox(height: 28),
 
         pw.Text(
-          showBalance ? 'Amount due' : 'Total',
+          fullyPaid ? 'Total' : 'Amount due',
           style: const pw.TextStyle(fontSize: 10, color: muted),
         ),
         pw.SizedBox(height: 4),
         pw.Text(
-          formatMoney(showBalance ? balance : invoice.total, symbol: symbol),
+          formatMoney(fullyPaid ? invoice.total : balance, symbol: symbol),
           style: pw.TextStyle(
             fontSize: 28,
             fontWeight: pw.FontWeight.bold,
@@ -158,17 +218,15 @@ Future<Uint8List> buildInvoicePdf({
             letterSpacing: -0.4,
           ),
         ),
-        if (invoice.dueDate != null) ...[
-          pw.SizedBox(height: 6),
-          pw.Text(
-            'Due ${_fmtLong(invoice.dueDate!)}',
-            style: pw.TextStyle(
-              fontSize: 11,
-              fontWeight: pw.FontWeight.bold,
-              color: ink,
-            ),
+        pw.SizedBox(height: 6),
+        pw.Text(
+          clientFacingStatus(invoice),
+          style: pw.TextStyle(
+            fontSize: 11,
+            fontWeight: pw.FontWeight.bold,
+            color: ink,
           ),
-        ],
+        ),
 
         pw.SizedBox(height: 28),
         pw.Container(height: 0.5, color: line),
@@ -187,6 +245,8 @@ Future<Uint8List> buildInvoicePdf({
                     [business?.city, business?.state]
                         .whereType<String>()
                         .join(', '),
+                  if (business?.phone != null) business!.phone!,
+                  if (business?.email != null) business!.email!,
                   if (business?.tin != null) 'TIN ${business!.tin}',
                 ],
               ),
@@ -197,8 +257,8 @@ Future<Uint8List> buildInvoicePdf({
                 name: client.name,
                 lines: [
                   if (client.company != null) client.company!,
-                  if (client.email != null) client.email!,
                   if (client.phone != null) client.phone!,
+                  if (client.email != null) client.email!,
                   if (client.addressLine1 != null) client.addressLine1!,
                 ],
               ),
@@ -208,9 +268,9 @@ Future<Uint8List> buildInvoicePdf({
                 label: 'Details',
                 name: null,
                 lines: [
-                  'Issued ${_fmt(invoice.issueDate)}',
-                  if (invoice.dueDate != null) 'Due ${_fmt(invoice.dueDate!)}',
-                  'Status ${status[0].toUpperCase()}${status.substring(1)}',
+                  'Issued ${fmtDate(invoice.issueDate)}',
+                  if (invoice.dueDate != null)
+                    'Due ${fmtDate(invoice.dueDate!)}',
                 ],
               ),
             ),
@@ -326,7 +386,7 @@ Future<Uint8List> buildInvoicePdf({
                     'Paid',
                     formatMoney(invoice.amountPaid, symbol: symbol),
                   ),
-                if (showBalance)
+                if (hasPartial)
                   _totalRow(
                     'Balance due',
                     formatMoney(balance, symbol: symbol),
@@ -337,6 +397,72 @@ Future<Uint8List> buildInvoicePdf({
             ),
           ),
         ),
+
+        if (hasBank && !fullyPaid) ...[
+          pw.SizedBox(height: 28),
+          pw.Container(
+            width: double.infinity,
+            padding: const pw.EdgeInsets.all(14),
+            decoration: pw.BoxDecoration(
+              border: pw.Border.all(color: line, width: 1),
+              borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+            ),
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Text(
+                  'PAYMENT INSTRUCTIONS',
+                  style: pw.TextStyle(
+                    fontSize: 8,
+                    fontWeight: pw.FontWeight.bold,
+                    letterSpacing: 1.1,
+                    color: muted,
+                  ),
+                ),
+                pw.SizedBox(height: 8),
+                if (business?.bankName != null &&
+                    business!.bankName!.trim().isNotEmpty)
+                  pw.Text(
+                    business.bankName!,
+                    style: pw.TextStyle(
+                      fontSize: 11,
+                      fontWeight: pw.FontWeight.bold,
+                      color: ink,
+                    ),
+                  ),
+                if (business?.bankAccountName != null &&
+                    business!.bankAccountName!.trim().isNotEmpty)
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.only(top: 3),
+                    child: pw.Text(
+                      business.bankAccountName!,
+                      style: const pw.TextStyle(fontSize: 10, color: ink),
+                    ),
+                  ),
+                if (business?.bankAccountNumber != null &&
+                    business!.bankAccountNumber!.trim().isNotEmpty)
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.only(top: 3),
+                    child: pw.Text(
+                      business.bankAccountNumber!,
+                      style: pw.TextStyle(
+                        fontSize: 12,
+                        fontWeight: pw.FontWeight.bold,
+                        color: accent,
+                      ),
+                    ),
+                  ),
+                pw.Padding(
+                  padding: const pw.EdgeInsets.only(top: 6),
+                  child: pw.Text(
+                    'Use invoice ${invoice.number} as your transfer reference.',
+                    style: const pw.TextStyle(fontSize: 9, color: muted),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
 
         if (payments.isNotEmpty) ...[
           pw.SizedBox(height: 28),
@@ -354,7 +480,7 @@ Future<Uint8List> buildInvoicePdf({
             pw.Padding(
               padding: const pw.EdgeInsets.only(bottom: 4),
               child: pw.Text(
-                '${_fmt(p.paidAt)}  ·  ${formatMoney(p.amount, symbol: symbol)}'
+                '${fmtDate(p.paidAt)}  ·  ${formatMoney(p.amount, symbol: symbol)}'
                 '${p.method != null ? '  ·  ${p.method}' : ''}'
                 '${p.reference != null ? '  ·  ref ${p.reference}' : ''}',
                 style: const pw.TextStyle(fontSize: 9, color: muted),
@@ -410,7 +536,7 @@ pw.Widget _partyBlock({
   required List<String> lines,
 }) {
   const ink = PdfColor.fromInt(0xFF111111);
-  const muted = PdfColor.fromInt(0xFF6B6B6B);
+  const muted = PdfColor.fromInt(0xFF4A4A4A);
   return pw.Column(
     crossAxisAlignment: pw.CrossAxisAlignment.start,
     children: [
@@ -438,7 +564,7 @@ pw.Widget _partyBlock({
           padding: const pw.EdgeInsets.only(top: 2),
           child: pw.Text(
             line,
-            style: const pw.TextStyle(fontSize: 9, color: muted),
+            style: const pw.TextStyle(fontSize: 10, color: muted),
           ),
         ),
     ],
@@ -452,7 +578,7 @@ pw.Widget _colHead(String text, {pw.TextAlign align = pw.TextAlign.left}) {
       fontSize: 8,
       fontWeight: pw.FontWeight.bold,
       letterSpacing: 0.6,
-      color: const PdfColor.fromInt(0xFF6B6B6B),
+      color: const PdfColor.fromInt(0xFF4A4A4A),
     ),
     textAlign: align,
   );
@@ -491,27 +617,6 @@ pw.Widget _totalRow(
       ],
     ),
   );
-}
-
-String _fmt(DateTime d) =>
-    '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
-
-String _fmtLong(DateTime d) {
-  const months = [
-    'January',
-    'February',
-    'March',
-    'April',
-    'May',
-    'June',
-    'July',
-    'August',
-    'September',
-    'October',
-    'November',
-    'December',
-  ];
-  return '${d.day} ${months[d.month - 1]} ${d.year}';
 }
 
 String _qty(double q) {
