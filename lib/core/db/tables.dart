@@ -1,6 +1,6 @@
 import 'package:drift/drift.dart';
 
-/// Single-row business profile. Company brand that appears on every invoice.
+/// Single-row business profile. Company brand that appears on every document.
 class BusinessProfiles extends Table {
   IntColumn get id => integer().autoIncrement()();
   TextColumn get companyName => text().withLength(min: 1, max: 200)();
@@ -12,24 +12,23 @@ class BusinessProfiles extends Table {
   TextColumn get state => text().nullable()();
   TextColumn get country => text().withDefault(const Constant('Nigeria'))();
 
-  // Tax identification number shown on invoices
   TextColumn get tin => text().nullable()();
-
-  // Absolute path to logo image on device storage
   TextColumn get logoPath => text().nullable()();
 
   TextColumn get accentColor => text().withDefault(const Constant('#0A0A0A'))();
   TextColumn get invoicePrefix => text().withDefault(const Constant('INV'))();
   IntColumn get nextInvoiceNumber => integer().withDefault(const Constant(1))();
 
-  // Nigeria VAT default rate (percent)
+  /// Branch tag prefix for Stage 1 (hardcoded per install): M = mainland, I = island.
+  TextColumn get branchPrefix => text().withDefault(const Constant('M'))();
+  IntColumn get nextTagNumber => integer().withDefault(const Constant(1))();
+
   RealColumn get defaultVatRate => real().withDefault(const Constant(7.5))();
   BoolColumn get vatEnabledByDefault =>
       boolean().withDefault(const Constant(false))();
   TextColumn get currencyCode => text().withDefault(const Constant('NGN'))();
   TextColumn get currencySymbol => text().withDefault(const Constant('₦'))();
 
-  // Payment instructions printed on invoices
   TextColumn get bankName => text().nullable()();
   TextColumn get bankAccountName => text().nullable()();
   TextColumn get bankAccountNumber => text().nullable()();
@@ -56,8 +55,7 @@ class Clients extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-// Status values: draft | sent | paid | partial | overdue | voided
-// overdue is also derived at read time when dueDate has passed and balance remains
+/// Legacy invoice path (kept for existing data). New laundry flow uses Orders.
 class Invoices extends Table {
   TextColumn get id => text()();
   TextColumn get number => text()();
@@ -100,13 +98,8 @@ class Payments extends Table {
   TextColumn get invoiceId => text().references(Invoices, #id)();
   RealColumn get amount => real()();
   DateTimeColumn get paidAt => dateTime()();
-
-  // transfer | cash | card | pos
   TextColumn get method => text().nullable()();
-
-  // Bank transfer reference / receipt number
   TextColumn get reference => text().nullable()();
-
   TextColumn get notes => text().nullable()();
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
 
@@ -114,13 +107,84 @@ class Payments extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-/// Line-item catalog built from real usage - no separate manage screen required.
+/// Legacy free-text saved lines from the old invoice editor.
 class SavedItems extends Table {
   TextColumn get id => text()();
   TextColumn get description => text()();
   RealColumn get unitPrice => real().withDefault(const Constant(0))();
   IntColumn get timesUsed => integer().withDefault(const Constant(1))();
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+/// Laundry price catalog: price is keyed by item name + service type.
+/// serviceType: wash_fold | dry_clean
+class CatalogItems extends Table {
+  TextColumn get id => text()();
+  TextColumn get name => text().withLength(min: 1, max: 120)();
+  TextColumn get serviceType => text()();
+  RealColumn get unitPrice => real().withDefault(const Constant(0))();
+  BoolColumn get active => boolean().withDefault(const Constant(true))();
+  IntColumn get sortOrder => integer().withDefault(const Constant(0))();
+  DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+/// Laundry order (internal record). Tag number is what the customer sees.
+/// workflowStatus: received | washing | ready | collected
+/// paymentStatus: unpaid | partial | paid
+class Orders extends Table {
+  TextColumn get id => text()();
+  TextColumn get tagNumber => text()();
+  TextColumn get clientId => text().references(Clients, #id)();
+  TextColumn get workflowStatus =>
+      text().withDefault(const Constant('received'))();
+  TextColumn get paymentStatus =>
+      text().withDefault(const Constant('unpaid'))();
+  DateTimeColumn get dropoffAt => dateTime()();
+  DateTimeColumn get expectedPickup => dateTime().nullable()();
+  TextColumn get currencyCode => text().withDefault(const Constant('NGN'))();
+  TextColumn get currencySymbol => text().withDefault(const Constant('₦'))();
+  RealColumn get subtotal => real().withDefault(const Constant(0))();
+  RealColumn get discountAmount => real().withDefault(const Constant(0))();
+  RealColumn get total => real().withDefault(const Constant(0))();
+  RealColumn get amountPaid => real().withDefault(const Constant(0))();
+  TextColumn get notes => text().nullable()();
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+  DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+class OrderItems extends Table {
+  TextColumn get id => text()();
+  TextColumn get orderId => text().references(Orders, #id)();
+  TextColumn get catalogItemId => text().nullable()();
+  TextColumn get description => text()();
+  TextColumn get serviceType => text()();
+  RealColumn get quantity => real().withDefault(const Constant(1))();
+  RealColumn get unitPrice => real().withDefault(const Constant(0))();
+  RealColumn get amount => real().withDefault(const Constant(0))();
+  IntColumn get sortOrder => integer().withDefault(const Constant(0))();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+class OrderPayments extends Table {
+  TextColumn get id => text()();
+  TextColumn get orderId => text().references(Orders, #id)();
+  RealColumn get amount => real()();
+  DateTimeColumn get paidAt => dateTime()();
+  TextColumn get method => text().nullable()();
+  TextColumn get reference => text().nullable()();
+  TextColumn get notes => text().nullable()();
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
 
   @override
   Set<Column> get primaryKey => {id};
