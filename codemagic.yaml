@@ -35,10 +35,10 @@ workflows:
           set -e
           dart run build_runner build --build-filter="lib/core/db/*"
 
-      - name: Build Android APK (release)
+      - name: Build Android APK (release, arm64 only)
         script: |
           set -e
-          flutter build apk --release
+          flutter build apk --release --target-platform android-arm64
 
     artifacts:
       - build/app/outputs/flutter-apk/*.apk
