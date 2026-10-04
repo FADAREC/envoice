@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../dashboard/dashboard_page.dart';
-import '../invoices/invoices_page.dart';
+import '../orders/orders_page.dart';
 import '../clients/clients_page.dart';
 import '../settings/settings_page.dart';
 import '../../core/theme/app_theme.dart';
@@ -20,7 +20,7 @@ class _AppShellState extends ConsumerState<AppShell> {
 
   final _pages = const [
     DashboardPage(),
-    InvoicesPage(),
+    OrdersPage(),
     ClientsPage(),
     SettingsPage(),
   ];
@@ -28,10 +28,8 @@ class _AppShellState extends ConsumerState<AppShell> {
   void _onTap(int i) {
     if (i == _index) return;
     HapticFeedback.selectionClick();
-    // IndexedStack keeps tabs alive, so FutureProviders stay stale.
-    // Refresh the destination tab whenever the user opens it.
     if (i == 0) ref.invalidate(dashboardStatsProvider);
-    if (i == 1) ref.invalidate(invoicesProvider);
+    if (i == 1) ref.invalidate(ordersProvider);
     if (i == 2) ref.invalidate(clientsProvider);
     setState(() => _index = i);
   }
@@ -64,9 +62,9 @@ class _AppShellState extends ConsumerState<AppShell> {
                   onTap: () => _onTap(0),
                 ),
                 _Tab(
-                  icon: Icons.description_outlined,
-                  activeIcon: Icons.description_rounded,
-                  label: 'Invoices',
+                  icon: Icons.local_laundry_service_outlined,
+                  activeIcon: Icons.local_laundry_service_rounded,
+                  label: 'Orders',
                   selected: _index == 1,
                   onTap: () => _onTap(1),
                 ),
