@@ -124,12 +124,19 @@ class SavedItems extends Table {
 class Services extends Table {
   TextColumn get id => text()();
   TextColumn get name => text().withLength(min: 1, max: 80)();
+  /// Lowercase trimmed name for uniqueness (DB-enforced).
+  TextColumn get nameKey => text().withLength(min: 1, max: 80)();
   BoolColumn get active => boolean().withDefault(const Constant(true))();
   IntColumn get sortOrder => integer().withDefault(const Constant(0))();
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
 
   @override
   Set<Column> get primaryKey => {id};
+
+  @override
+  List<Set<Column>> get uniqueKeys => [
+        {nameKey},
+      ];
 }
 
 /// Price catalog: one row per (item name, service).
@@ -137,6 +144,8 @@ class Services extends Table {
 class CatalogItems extends Table {
   TextColumn get id => text()();
   TextColumn get name => text().withLength(min: 1, max: 120)();
+  /// Lowercase trimmed name for uniqueness with serviceId.
+  TextColumn get nameKey => text().withLength(min: 1, max: 120)();
   TextColumn get serviceId => text().references(Services, #id)();
   RealColumn get unitPrice => real().withDefault(const Constant(0))();
   BoolColumn get active => boolean().withDefault(const Constant(true))();
@@ -145,6 +154,11 @@ class CatalogItems extends Table {
 
   @override
   Set<Column> get primaryKey => {id};
+
+  @override
+  List<Set<Column>> get uniqueKeys => [
+        {nameKey, serviceId},
+      ];
 }
 
 /// Laundry order (internal record). Tag number is what the customer sees.
