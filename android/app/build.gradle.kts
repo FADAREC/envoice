@@ -25,6 +25,12 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // Nigeria / modern Android: arm64-only keeps the APK much smaller.
+        // Devices that need armeabi-v7a or x86 are rare for staff phones.
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     buildTypes {
