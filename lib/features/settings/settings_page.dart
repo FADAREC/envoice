@@ -11,6 +11,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/security/app_lock.dart';
 import '../../core/backup/backup_service.dart';
 import 'logo_pick.dart';
+import 'laundry_setup_page.dart';
 import '../dashboard/dashboard_page.dart';
 import '../invoices/invoices_page.dart';
 import '../clients/clients_page.dart';
@@ -307,6 +308,23 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   ref.invalidate(businessProfileProvider);
                 },
               ),
+            ),
+            const SizedBox(height: 28),
+            Text('Laundry', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Text(
+              'Services, prices, and branch tag prefix for drop-off.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton(
+              onPressed: () async {
+                await Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const LaundrySetupPage()),
+                );
+                ref.invalidate(businessProfileProvider);
+              },
+              child: const Text('Services and prices'),
             ),
             const SizedBox(height: 28),
             Text('Security', style: Theme.of(context).textTheme.titleMedium),
