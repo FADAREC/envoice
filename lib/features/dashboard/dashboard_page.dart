@@ -71,7 +71,44 @@ class DashboardPage extends ConsumerWidget {
                   ),
                 ),
               ),
-              const Sli verToBoxAdapter(child: SizedBox(height: 28)),
+              const SliverToBoxAdapter(child: SizedBox(height: 28)),
+              SliverToBoxAdapter(
+                child: statsAsync.when(
+                  loading: () => const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 80),
+                    child: Center(
+                      child: SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: AppColors.black,
+                        ),
+                      ),
+                    ),
+                  ),
+                  error: (e, _) => Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Text(
+                      'Could not load overview',
+                      style: TextStyle(color: AppColors.danger),
+                    ),
+                  ),
+                  data: (stats) => _Body(
+                    stats: stats,
+                    onNewDropoff: () => _newDropoff(context, ref),
+                    onOpenInvoice: (id) async {
+                      await Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => InvoiceDetailPage(invoiceId: id),
+                        ),
+                      );
+                      ref.invalidate(dashboardStatsProvider);
+                      ref.invalidate(invoicesProvider);
+                    },
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -86,5 +123,357 @@ class DashboardPage extends ConsumerWidget {
     );
     ref.invalidate(dashboardStatsProvider);
     ref.invalidate(ordersProvider);
+  }
+}
+
+class _Body extends StatelessWidget {
+  final DashboardStats stats;
+  final VoidCallback onNewDropoff;
+  final Future<void> Function(String invoiceId) onOpenInvoice;
+
+  const _Body({
+    required this.stats,
+    required this.onNewDropoff,
+    required this.onOpenInvoice,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isEmpty = stats.invoiceCount == 0 && stats.clientCount == 0;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 40),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Outstanding',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: AppColors.secondary,
+                ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            formatMoney(stats.outstanding),
+            style: Theme.of(context).textTheme.displayLarge?.copyWith(
+                  fontSize: 40,
+                  letterSpacing: -1.0,
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+          const SizedBox(height: 28),
+          Row(
+            children: [
+              Expanded(
+                child: _Metric(
+                  label: 'Paid this month',
+                  value: formatMoney(stats.paidThisMonth),
+                ),
+              ),
+              Container(width: 0.5, height: 44, color: AppColors.hairline),
+              Expanded(
+                child: _Metric(
+                  label: 'Overdue',
+                  value: stats.overdueCount.toString(),
+                  valueColor: stats.overdueCount > 0 ? AppColors.danger : null,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 32),
+          const Divider(height: 0.5),
+          const SizedBox(height: 28),
+          if (stats.debtors.isNotEmpty) ...[
+            Text(
+              'Money owed',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Oldest first',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            for (final d in stats.debtors.take(8))
+              _DebtorRow(
+                entry: d,
+                onTap: () => onOpenInvoice(d.invoice.id),
+              ),
+            if (stats.debtors.length > 8)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  '+ ' + (stats.debtors.length - 8).toString() + ' more',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            const SizedBox(height: 28),
+            const Divider(height: 0.5),
+            const SizedBox(height: 28),
+          ],
+          Text(
+            'Quick actions',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 14),
+          _ActionRow(
+            icon: Icons.add_circle_outline,
+            title: 'New drop-off',
+            subtitle: 'Customer, items, tag in under a minute',
+            onTap: onNewDropoff,
+          ),
+          const SizedBox(height: 10),
+          _ActionRow(
+            icon: Icons.person_add_alt_1_outlined,
+            title: 'Add client',
+            subtitle: 'Save details for faster billing',
+            onTap: () {
+              HapticFeedback.selectionClick();
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const ClientEditorPage()),
+              );
+            },
+          ),
+          if (isEmpty) ...[
+            const SizedBox(height: 40),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: AppColors.fill,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Start here',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Set prices in Settings, add a customer, then start a drop-off. Tag number is assigned automatically.',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: AppColors.secondary,
+                          height: 1.45,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+          ] else if (stats.debtors.isEmpty) ...[
+            const SizedBox(height: 32),
+            Row(
+              children: [
+                Expanded(
+                  child: _CountCard(
+                    label: 'Invoices',
+                    value: stats.invoiceCount.toString(),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _CountCard(
+                    label: 'Clients',
+                    value: stats.clientCount.toString(),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _DebtorRow extends StatelessWidget {
+  final OutstandingEntry entry;
+  final VoidCallback onTap;
+
+  const _DebtorRow({required this.entry, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final inv = entry.invoice;
+    final due = inv.dueDate != null
+        ? ' · due ' + _fmt(inv.dueDate!)
+        : '';
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          HapticFeedback.selectionClick();
+          onTap();
+        },
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      entry.clientName,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      inv.number + due,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: entry.isOverdue
+                                ? AppColors.danger
+                                : AppColors.secondary,
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              Text(
+                formatMoney(entry.remaining, symbol: inv.currencySymbol),
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: entry.isOverdue ? AppColors.danger : AppColors.ink,
+                    ),
+              ),
+              const SizedBox(width: 4),
+              const Icon(Icons.chevron_right, size: 18, color: AppColors.tertiary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _fmt(DateTime d) =>
+      d.day.toString().padLeft(2, '0') + '/' + d.month.toString().padLeft(2, '0');
+}
+
+class _Metric extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? valueColor;
+
+  const _Metric({
+    required this.label,
+    required this.value,
+    this.valueColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  color: valueColor ?? AppColors.ink,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ActionRow extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  const _ActionRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.fill,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Icon(icon, size: 22, color: AppColors.ink),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: Theme.of(context).textTheme.titleMedium),
+                    const SizedBox(height: 2),
+                    Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, size: 20, color: AppColors.tertiary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CountCard extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _CountCard({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        border: Border.all(color: AppColors.hairline, width: 0.5),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 6),
+          Text(value, style: Theme.of(context).textTheme.headlineMedium),
+        ],
+      ),
+    );
+  }
+}
+
+class _CircleButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _CircleButton({required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.black,
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: SizedBox(
+          width: 40,
+          height: 40,
+          child: Icon(icon, size: 22, color: AppColors.white),
+        ),
+      ),
+    );
   }
 }
